@@ -155,10 +155,12 @@ folly::coro::Task<void> Loader::co_fetch(std::mt19937_64& random) {
     shard = *picked;
     const auto wait =
         attempt < 2 ? std::chrono::milliseconds(0) : options_.wait;
+    const auto start = Clock::now();
     result = co_await stream_->shard(shard).co_take(
         name, options_.epoch, options_.chunksPerTake, wait);
     std::lock_guard lock(mutex_);
     ++stats_.takes;
+    stats_.takeTime += Clock::now() - start;
     if (result.end && !ended_[shard]) {
       ended_[shard] = true;
       ++endedShards_;
