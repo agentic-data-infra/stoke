@@ -1,0 +1,10 @@
+# The batch format (Batch.h). Standard C++ only: producers outside stoke use
+# it too.
+
+cxx_library(
+    name = "format",
+    srcs = ["Batch.cpp"],
+    header_namespace = "stoke/format",
+    exported_headers = ["Batch.h"],
+    visibility = ["PUBLIC"],
+)

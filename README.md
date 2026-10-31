@@ -20,9 +20,9 @@ the producers, Kiln and the trainers.
   stoke adds one Kiln ref per stream and no other load on Kiln's metadata
   server.
 
-Status: in development. There are shard servers and the `stoke` CLI;
-next come a batch format, a C++ dataloader with a PyTorch
-`IterableDataset`, a `stoke://` file system in Ember, and examples.
+Status: in development. There are shard servers, the `stoke` CLI and the
+batch format; next come a C++ dataloader with a PyTorch `IterableDataset`,
+a `stoke://` file system in Ember, and examples.
 
 ## Streams
 
@@ -66,6 +66,15 @@ buck2 run //bin:stoke -- stats demo
 buck2 run //bin:stoke -- seal demo
 buck2 run //bin:stoke -- rm demo
 ```
+
+## Batch format
+
+A chunk holds framed batches: `[u64 length][batch]...`, where a batch is a
+64-byte header (dtype, up to 6 dims of shape, payload length) followed by
+the tensor's elements, padded to 8 bytes so that tensors in a chunk read
+into aligned memory can be used in place. Batches in a chunk may differ in
+shape. See [stoke/format/Batch.h](stoke/format/Batch.h), which has no
+dependencies, for producers outside stoke.
 
 ## Building
 
