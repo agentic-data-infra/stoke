@@ -15,8 +15,8 @@ class Client;
 namespace stoke {
 
 // Writes chunks of a stream: each into the stream's Kiln bucket, then puts
-// it at its shard. For producers that are not Ember jobs (which write
-// stoke:// files), e.g. tests, benchmarks and Python feeds.
+// it at its shard. Ember's stoke connector writes through it, and so do
+// tests, benchmarks and Python feeds.
 class Producer {
  public:
   Producer(
