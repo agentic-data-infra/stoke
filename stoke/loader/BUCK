@@ -1,0 +1,12 @@
+cxx_library(
+    name = "loader",
+    srcs = ["Loader.cpp"],
+    header_namespace = "stoke/loader",
+    exported_headers = ["Loader.h"],
+    exported_deps = [
+        "//stoke/client:client",
+        "//stoke/format:format",
+    ],
+    deps = ["kiln//kiln/client:client"],
+    visibility = ["PUBLIC"],
+)

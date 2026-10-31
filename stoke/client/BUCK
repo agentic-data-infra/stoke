@@ -22,3 +22,13 @@ cxx_library(
     ],
     visibility = ["PUBLIC"],
 )
+
+cxx_library(
+    name = "producer",
+    srcs = ["Producer.cpp"],
+    header_namespace = "stoke/client",
+    exported_headers = ["Producer.h"],
+    exported_deps = [":client"],
+    deps = ["kiln//kiln/client:client"],
+    visibility = ["PUBLIC"],
+)

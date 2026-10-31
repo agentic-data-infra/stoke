@@ -1,0 +1,50 @@
+# The Python module stoke._stoke: the dataloader, linked with stoke, Kiln's
+# client, folly and fbthrift into one shared object.
+#
+#   buck2 build //python:_stoke --out python/stoke/_stoke.so
+#
+# Only PyInit__stoke is exported, so the static folly inside never clashes
+# with libraries torch brings into the same process.
+
+load("//third-party/generated:python.bzl", "PYTHON_PREPROCESSOR_FLAGS")
+
+# Python and pybind11 headers, from the interpreter
+# scripts/gen_third_party.sh was given (default .venv).
+prebuilt_cxx_library(
+    name = "pybind11",
+    header_only = True,
+    exported_preprocessor_flags = PYTHON_PREPROCESSOR_FLAGS,
+)
+
+cxx_library(
+    name = "_stoke",
+    srcs = ["StokeModule.cpp"],
+    headers = ["DLPack.h"],
+    header_namespace = "python",
+    soname = "_stoke.so",
+    preferred_linkage = "shared",
+    link_style = "static_pic",
+    deps = [
+        "//stoke/client:producer",
+        "//stoke/loader:loader",
+        ":pybind11",
+        "kiln//kiln/client:client",
+    ],
+    compiler_flags = ["-fvisibility=hidden"],
+    linker_flags = [
+        # libgcc_s ahead of libunwind (which folly and glog pull in), so the
+        # module unwinds exceptions with the same unwinder as libstdc++,
+        # whichever library loaded first.
+        "-Wl,--push-state,--no-as-needed",
+        "-lgcc_s",
+        "-Wl,--pop-state",
+        "-Wl,--version-script=$(location :exports)",
+        "-Wl,--exclude-libs,ALL",
+    ],
+    link_ordering = "topological",
+)
+
+export_file(
+    name = "exports",
+    src = "exports.map",
+)
