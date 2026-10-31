@@ -1,0 +1,35 @@
+# stoke's shard server and its command line client.
+
+cxx_library(
+    name = "common",
+    exported_headers = [
+        "Metadata.h",
+        "Signals.h",
+    ],
+    header_namespace = "bin",
+    exported_deps = ["kiln//kiln/client:client"],
+)
+
+cxx_binary(
+    name = "stoke_shard",
+    srcs = ["StokeShard.cpp"],
+    deps = [
+        ":common",
+        "//stoke/client:registry",
+        "//stoke/shard:shard",
+    ],
+    # Archives must precede the prebuilt libraries they use.
+    link_ordering = "topological",
+    visibility = ["PUBLIC"],
+)
+
+cxx_binary(
+    name = "stoke",
+    srcs = ["Stoke.cpp"],
+    deps = [
+        ":common",
+        "//stoke/client:client",
+    ],
+    link_ordering = "topological",
+    visibility = ["PUBLIC"],
+)

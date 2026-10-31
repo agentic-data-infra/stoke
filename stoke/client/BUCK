@@ -1,0 +1,24 @@
+# The stream registry (Kiln refs) and the client of a stream's shards, for
+# producers, consumers and the stoke CLI.
+
+cxx_library(
+    name = "registry",
+    srcs = ["Registry.cpp"],
+    header_namespace = "stoke/client",
+    exported_headers = ["Registry.h"],
+    exported_deps = ["//stoke/common:common"],
+    deps = ["kiln//kiln/client:client"],
+    visibility = ["PUBLIC"],
+)
+
+cxx_library(
+    name = "client",
+    srcs = ["StreamClient.cpp"],
+    header_namespace = "stoke/client",
+    exported_headers = ["StreamClient.h"],
+    exported_deps = [
+        ":registry",
+        "//stoke/rpc:rpc",
+    ],
+    visibility = ["PUBLIC"],
+)
