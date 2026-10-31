@@ -20,9 +20,9 @@ the producers, Kiln and the trainers.
   stoke adds one Kiln ref per stream and no other load on Kiln's metadata
   server.
 
-Status: in development. There are shard servers, the `stoke` CLI and the
-batch format; next come a C++ dataloader with a PyTorch `IterableDataset`,
-a `stoke://` file system in Ember, and examples.
+Status: in development. There are shard servers, the `stoke` CLI, the
+batch format and the dataloader (C++, with a PyTorch `IterableDataset`);
+next come a `stoke://` file system in Ember, and examples.
 
 ## Streams
 
@@ -75,6 +75,44 @@ the tensor's elements, padded to 8 bytes so that tensors in a chunk read
 into aligned memory can be used in place. Batches in a chunk may differ in
 shape. See [stoke/format/Batch.h](stoke/format/Batch.h), which has no
 dependencies, for producers outside stoke.
+
+## Dataloader
+
+Each rank runs a loader ([stoke/loader/Loader.h](stoke/loader/Loader.h)).
+Its fetcher threads keep a buffer of batches filled: a fetcher takes a
+chunk from a random shard, tries a second one if that was empty, and then
+waits at a third (100 ms by default); it reads the whole chunk from Kiln,
+splits it into batches, removes the chunk from Kiln and acks it. `next()`
+hands out batches that point into the chunk's memory; once every shard has
+ended the stream it returns the end. A restarted rank (a higher
+incarnation) first returns the chunks leased to its previous incarnation;
+chunks read but not trained on before a crash are lost (at most once).
+
+In Python (`python/stoke`), batches are tensors without copies:
+
+```python
+import stoke, torch
+
+dataset = stoke.StokeDataset("demo", job=f"run1-rank{rank}", metadata="localhost:7470")
+for batch in torch.utils.data.DataLoader(dataset, batch_size=None):
+    ...  # e.g. an int32 [B, T+1] tensor as the producer packed it
+print(dataset.stats())  # batches, chunks, wait_seconds (starving), ...
+```
+
+Ranks reach the end at about the same time, not at the same step: stop
+them together with `stoke.all_ranks_have_data(has_batch)` every step (an
+`all_reduce(MIN)`). `stoke.Producer` puts chunks of NumPy arrays, for feeds
+that are not Ember jobs; `stoke.create_stream`, `seal_stream` and
+`remove_stream` do what the CLI does.
+
+```
+uv venv --python 3.10 .venv
+uv pip install --python .venv/bin/python pybind11 numpy pytest
+uv pip install --python .venv/bin/python torch --index-url https://download.pytorch.org/whl/cpu
+scripts/gen_third_party.sh   # again, for the Python flags
+buck2 build //python:_stoke --out python/stoke/_stoke.so
+(cd python && PYTHONPATH=. ../.venv/bin/python -m pytest tests)
+```
 
 ## Building
 

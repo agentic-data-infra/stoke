@@ -1,1 +1,5 @@
 /buck-out/
+/.venv/
+/third-party/generated/
+/python/stoke/_stoke.so
+__pycache__/
