@@ -1,0 +1,9 @@
+cxx_library(
+    name = "shard",
+    srcs = ["Shard.cpp"],
+    header_namespace = "stoke/shard",
+    exported_headers = ["Shard.h"],
+    exported_deps = ["//stoke/rpc:rpc"],
+    deps = ["//stoke/client:registry"],
+    visibility = ["PUBLIC"],
+)

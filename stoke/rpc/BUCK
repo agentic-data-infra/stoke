@@ -1,0 +1,29 @@
+# stoke's RPC over fbthrift. Only this package sees fbthrift and the code
+# generated from stoke.thrift: its headers expose the shard's operations
+# (ShardRpc.h) and how to serve and call them (Rpc.h).
+
+load("@kiln//third-party:thrift.bzl", "thrift_cpp_library")
+
+thrift_cpp_library(
+    name = "stoke_thrift",
+    src = "stoke.thrift",
+    services = ["ShardService"],
+    visibility = ["//stoke/rpc/..."],
+)
+
+cxx_library(
+    name = "rpc",
+    srcs = glob(["*.cpp"]),
+    header_namespace = "stoke/rpc",
+    exported_headers = [
+        "Rpc.h",
+        "ShardRpc.h",
+    ],
+    headers = ["Convert.h"],
+    exported_deps = [
+        "//stoke/common:common",
+        "kiln//kiln/common:common",
+    ],
+    deps = [":stoke_thrift"],
+    visibility = ["PUBLIC"],
+)

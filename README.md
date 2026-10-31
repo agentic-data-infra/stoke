@@ -20,10 +20,9 @@ the producers, Kiln and the trainers.
   stoke adds one Kiln ref per stream and no other load on Kiln's metadata
   server.
 
-Status: in development. Plan: stoke shard servers (`co_put`, `co_take`,
-`co_ack`, `co_release`, `co_stats`), the `stoke` CLI, a batch format, a C++
-dataloader with a PyTorch `IterableDataset`, a `stoke://` file system in
-Ember, and examples.
+Status: in development. There are shard servers and the `stoke` CLI;
+next come a batch format, a C++ dataloader with a PyTorch
+`IterableDataset`, a `stoke://` file system in Ember, and examples.
 
 ## Streams
 
@@ -32,6 +31,41 @@ JSON: the Kiln bucket of its chunks, its shards' endpoints, its state
 (`open` or `sealed`) and the fraction of chunks after which shards end a
 sealed stream (`stopFraction`, so that ranks stop together). See
 [stoke/common/Stream.h](stoke/common/Stream.h).
+
+## Shards
+
+A shard server (`stoke_shard`) keeps, for each stream that lists it, the
+chunk ids put there, in DRAM ([stoke/shard/Shard.h](stoke/shard/Shard.h);
+the API is [stoke/rpc/ShardRpc.h](stoke/rpc/ShardRpc.h), over fbthrift):
+
+- `co_put(stream, chunk)` queues a chunk, or hands it straight to a waiting
+  take; a chunk the shard already has is dropped.
+- `co_take(stream, epoch, max, wait)` returns up to `max` chunks, leased to
+  the consumer's epoch (job, incarnation). On an empty queue it parks for
+  up to `wait`, so consumers never poll.
+- `co_ack(stream, epoch, chunks)` ends leases; `co_release(stream, epoch)`
+  queues all of an epoch's leased chunks again, for a restarted consumer.
+  Leases not acked within `--lease_timeout_s` are queued again too.
+- Once a stream is sealed, a shard ends it (`take` returns `end`) when it
+  handed out `stopFraction` of its chunks, or all of them.
+- `co_stats(stream)`: depth, leased, waiting takes, chunks put, taken and
+  acked. Summed over the shards, depth is the backlog and waiters says
+  whether consumers starve.
+
+Shards learn streams from the registry on first use and re-read their
+entries every second, to see seals and removals. A producer puts each
+chunk at shard `shardOf(id)`; a consumer takes from shards at random
+([stoke/client/StreamClient.h](stoke/client/StreamClient.h)).
+
+```
+third-party/kiln/scripts/start_local_cluster.sh -d 1 -l 0 -r 4   # prints localhost:7470
+buck2 run //bin:stoke_shard -- --port=7480 &
+buck2 run //bin:stoke_shard -- --port=7481 &
+buck2 run //bin:stoke -- create demo --shards=localhost:7480,localhost:7481
+buck2 run //bin:stoke -- stats demo
+buck2 run //bin:stoke -- seal demo
+buck2 run //bin:stoke -- rm demo
+```
 
 ## Building
 

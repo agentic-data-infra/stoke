@@ -1,0 +1,13 @@
+cxx_test(
+    name = "shard_test",
+    srcs = glob(["*.cpp"]),
+    deps = [
+        "//stoke/client:registry",
+        "//stoke/shard:shard",
+        "//stoke/tests:test_main",
+        "kiln//kiln/client:client",
+        "kiln//kiln/local:local",
+    ],
+    # Archives must precede the prebuilt libraries they use.
+    link_ordering = "topological",
+)
