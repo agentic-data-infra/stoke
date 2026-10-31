@@ -114,6 +114,34 @@ buck2 build //python:_stoke --out python/stoke/_stoke.so
 (cd python && PYTHONPATH=. ../.venv/bin/python -m pytest tests)
 ```
 
+## Benchmark
+
+`examples/bench` runs synthetic producers and consumers (one dataloader
+each) against shards and Kiln in one process, over TCP, and prints for 1,
+2, 4 and 8 consumers: chunks/s and GB/s, mean take time, the share of
+empty takes, and how much of the time consumers starved. `--step_us`
+simulates a training step per batch, `--produce_rate` limits producers.
+
+```
+buck2 run //examples/bench:stoke_bench -- --step_us=2000
+```
+
+On velox-dev (16 vCPUs, 4 shards, 4 producers, 500 chunks of 4 MiB with 4
+batches each, a 2 ms step per batch):
+
+| consumers | chunks/s | GB/s | take ms | empty takes | starved (mean) |
+|---:|---:|---:|---:|---:|---:|
+| 1 | 118 | 0.50 | 0.23 | 3% | 0.6% |
+| 2 | 236 | 0.99 | 0.23 | 10% | 0.4% |
+| 4 | 468 | 1.96 | 1.5 | 38% | 1.0% |
+| 8 | 648 | 2.72 | 7.3 | 67% | 31% |
+
+Consumers scale linearly until the producers (about 700 chunks/s here)
+can no longer keep up; then they wait parked at shards, not polling. Kiln
+stores chunks in whole 1 MiB blocks and reuses the blocks of removed
+chunks only after its grace period (30 s by default), so DRAM needs room
+for that much throughput beyond the backlog; the benchmark uses 1 s.
+
 ## Building
 
 stoke builds with [Buck2](https://buck2.build), like Kiln and Ember, with

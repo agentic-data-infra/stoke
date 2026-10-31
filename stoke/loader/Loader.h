@@ -55,6 +55,8 @@ struct LoaderStats {
   uint64_t takes{0};
   // Takes that returned no chunks.
   uint64_t emptyTakes{0};
+  // Time in takes, including the waits of parked ones.
+  std::chrono::nanoseconds takeTime{0};
   // Failed takes or reads, retried; chunks that could not be read are lost.
   uint64_t errors{0};
   uint64_t lostChunks{0};

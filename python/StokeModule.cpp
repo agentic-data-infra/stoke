@@ -121,6 +121,8 @@ py::dict statsDict(const LoaderStats& stats) {
   result["bytes"] = stats.bytes;
   result["takes"] = stats.takes;
   result["empty_takes"] = stats.emptyTakes;
+  result["take_seconds"] =
+      std::chrono::duration<double>(stats.takeTime).count();
   result["errors"] = stats.errors;
   result["lost_chunks"] = stats.lostChunks;
   result["wait_seconds"] =
