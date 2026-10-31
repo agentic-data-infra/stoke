@@ -1,6 +1,8 @@
 # stoke
 
-A queue that feeds training data to PyTorch while it is being made.
+A dataloader and data preprocessing system for PyTorch, based on
+[Ember](https://github.com/agentic-data-infra/ember): it feeds training
+data to PyTorch while it is being made.
 
 Producers (e.g. [Ember](https://github.com/agentic-data-infra/ember) jobs)
 write batches of training data into chunks of
