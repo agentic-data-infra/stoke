@@ -5,8 +5,9 @@ A distributed PyTorch dataloader for data preprocessed by
 preprocessing as an Ember Dataframe pipeline, and stoke feeds its output to
 the trainers while the pipeline runs.
 
-Producers (e.g. [Ember](https://github.com/agentic-data-infra/ember) jobs)
-write batches of training data into chunks of
+Producers (e.g. the workers running an
+[Ember](https://github.com/agentic-data-infra/ember) job's tasks) write
+batches of training data into chunks of
 [Kiln](https://github.com/agentic-data-infra/kiln), and trainers read them,
 at the same time. stoke is the queue between them: its messages are just
 chunk ids (16 bytes), and the bytes of the batches only ever move between
