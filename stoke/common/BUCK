@@ -1,0 +1,8 @@
+cxx_library(
+    name = "common",
+    srcs = glob(["*.cpp"]),
+    header_namespace = "stoke/common",
+    exported_headers = glob(["*.h"]),
+    exported_deps = ["kiln//kiln/common:common"],
+    visibility = ["PUBLIC"],
+)

@@ -1,0 +1,18 @@
+# stoke's external dependencies are Kiln's: folly (with folly::coro), glog,
+# gflags, fbthrift's C++ runtime and gtest, all from the GCC 12 build in
+# /opt/deps-gcc12. Kiln's third-party/BUCK wraps them; its flags come from
+# third-party/kiln/third-party/generated/deps.bzl, which
+# scripts/gen_third_party.sh generates. Thrift code generation: Kiln's
+# thrift_cpp_library (kiln//third-party:thrift.bzl).
+
+alias(
+    name = "fbthrift",
+    actual = "kiln//third-party:fbthrift",
+    visibility = ["PUBLIC"],
+)
+
+alias(
+    name = "gtest",
+    actual = "kiln//third-party:gtest",
+    visibility = ["PUBLIC"],
+)
