@@ -1,8 +1,9 @@
 # stoke
 
-A dataloader and data preprocessing system for PyTorch, based on
-[Ember](https://github.com/agentic-data-infra/ember): it feeds training
-data to PyTorch while it is being made.
+stoke streams training data from
+[Ember](https://github.com/agentic-data-infra/ember) to PyTorch. You write
+preprocessing as an Ember Dataframe pipeline, and stoke feeds its output to
+the trainers while the pipeline runs.
 
 Producers (e.g. [Ember](https://github.com/agentic-data-infra/ember) jobs)
 write batches of training data into chunks of
