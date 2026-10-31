@@ -43,6 +43,14 @@ class ShardRpc {
       Epoch epoch,
       std::vector<kiln::ChunkId> chunks) = 0;
 
+  // Whether 'chunk', put at this shard, was consumed (acked). If not, waits
+  // up to 'wait' for its ack. Producers call it to stay within their
+  // StreamInfo::taskBudget. kNotFound for a chunk the shard does not have.
+  virtual folly::coro::Task<bool> co_awaitConsumed(
+      std::string stream,
+      kiln::ChunkId chunk,
+      std::chrono::milliseconds wait) = 0;
+
   // Returns every chunk leased to 'epoch' to the queue; returns how many.
   virtual folly::coro::Task<uint64_t> co_release(
       std::string stream,

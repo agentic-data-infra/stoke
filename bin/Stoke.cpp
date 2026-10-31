@@ -1,7 +1,7 @@
 // stoke: manages streams.
 //
 //   stoke [--metadata=URLS] create STREAM --shards=HOST:PORT,...
-//         [--stop_fraction=F]
+//         [--stop_fraction=F] [--task_budget=N]
 //   stoke [--metadata=URLS] seal STREAM
 //   stoke [--metadata=URLS] stats STREAM
 //   stoke [--metadata=URLS] ls
@@ -10,7 +10,8 @@
 // create registers an open stream over the shard servers (stoke_shard) and
 // a new Kiln bucket for its chunks. seal tells the shards that no more
 // chunks come, so that consumers see the end once they took --stop_fraction
-// of them. stats prints each shard's queue: the backlog (depth), the
+// of them; with --task_budget, each producer waits once it has N chunks
+// put and not yet consumed. stats prints each shard's queue: the backlog (depth), the
 // consumers waiting, and chunks put, taken and acked. rm removes the stream
 // and its chunks.
 //
@@ -38,6 +39,11 @@ DEFINE_double(
     0.95,
     "create: the fraction of a shard's chunks after which a sealed stream "
     "ends there.");
+DEFINE_uint32(
+    task_budget,
+    0,
+    "create: the chunks each producer (e.g. each Ember task) may have put "
+    "and not yet seen consumed before it waits; 0 for no limit.");
 
 namespace stoke {
 namespace {
@@ -98,7 +104,8 @@ folly::coro::Task<int> co_main(std::vector<std::string> args) {
     std::vector<std::string> shards;
     folly::split(',', FLAGS_shards, shards, true);
     auto info =
-        co_await registry->co_create(args[1], shards, FLAGS_stop_fraction);
+        co_await registry->co_create(
+            args[1], shards, FLAGS_stop_fraction, FLAGS_task_budget);
     fmt::print("{}\n", info.encode());
   } else if (command == "seal" && args.size() == 2) {
     co_await registry->co_seal(args[1]);

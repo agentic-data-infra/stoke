@@ -66,6 +66,26 @@ TEST_F(StreamClientTest, rejectsUnknownStreams) {
   }
 }
 
+// A producer waits at the chunk's shard, over RPC, until a consumer acks
+// it.
+TEST_F(StreamClientTest, awaitsConsumptionAtTheChunksShard) {
+  auto client = blockingWait(StreamClient::co_open(registry_, "s"));
+  const kiln::ChunkId chunk{0, 42};
+  blockingWait(client->co_put(chunk));
+  EXPECT_FALSE(blockingWait(client->co_awaitConsumed(chunk, milliseconds(0))));
+
+  auto& shard = client->shard(shardOf(chunk, kShards));
+  Epoch epoch{"consumer", 1};
+  std::thread consumer([&] {
+    std::this_thread::sleep_for(milliseconds(50));
+    auto taken = blockingWait(shard.co_take("s", epoch, 1, milliseconds(0)));
+    blockingWait(shard.co_ack("s", epoch, taken.chunks));
+  });
+  EXPECT_TRUE(
+      blockingWait(client->co_awaitConsumed(chunk, std::chrono::seconds(5))));
+  consumer.join();
+}
+
 // Producers put chunks (each twice, as retried tasks would) while consumers
 // take from random shards, as the dataloader does; then the stream is
 // sealed. Every chunk is consumed exactly once and every consumer sees the

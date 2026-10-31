@@ -21,8 +21,8 @@ struct ShardOptions {
   // How often the shard re-reads its streams' registry entries (to see
   // seals and removals) and expires leases; 0 to do it only on co_refresh.
   std::chrono::milliseconds refreshInterval{std::chrono::seconds(1)};
-  // Bounds on co_take's arguments. A server stops after the takes in
-  // flight, so waits stay short.
+  // Bounds on co_take's arguments (maxWait also on co_awaitConsumed's). A
+  // server stops after the calls in flight, so waits stay short.
   uint32_t maxTake{4096};
   std::chrono::milliseconds maxWait{std::chrono::seconds(5)};
 };
@@ -32,7 +32,8 @@ struct ShardOptions {
 // once (duplicates are dropped), leased to the epoch that took it until
 // acked, and goes back to the queue if released or its lease times out.
 // Takes on an empty queue park until a chunk comes or their wait is over;
-// there is no polling. A sealed stream ends at this shard once it handed
+// there is no polling; so do producers waiting for a chunk's ack
+// (co_awaitConsumed). A sealed stream ends at this shard once it handed
 // out StreamInfo::stopFraction of its chunks, or all of them.
 //
 // Streams are learned from the registry on their first call. Thread safe.
@@ -55,6 +56,11 @@ class Shard : public rpc::ShardRpc {
       std::string stream,
       Epoch epoch,
       std::vector<kiln::ChunkId> chunks) override;
+
+  folly::coro::Task<bool> co_awaitConsumed(
+      std::string stream,
+      kiln::ChunkId chunk,
+      std::chrono::milliseconds wait) override;
 
   folly::coro::Task<uint64_t> co_release(std::string stream, Epoch epoch)
       override;

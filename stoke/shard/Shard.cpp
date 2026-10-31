@@ -29,7 +29,16 @@ struct Waiter {
 
 using Waiters = std::vector<std::shared_ptr<Waiter>>;
 
-void wake(const Waiters& waiters) {
+// A producer parked until a chunk's ack or its timeout.
+struct ConsumedWaiter {
+  bool done{false};
+  folly::coro::Baton baton;
+};
+
+using ConsumedWaiters = std::vector<std::shared_ptr<ConsumedWaiter>>;
+
+template <typename T>
+void wake(const std::vector<std::shared_ptr<T>>& waiters) {
   for (const auto& waiter : waiters) {
     waiter->baton.post();
   }
@@ -43,13 +52,20 @@ struct Shard::Stream {
     Clock::time_point deadline;
   };
 
+  struct Chunk {
+    bool taken{false};
+    bool consumed{false};
+  };
+
   std::mutex mutex;
   StreamInfo info;
-  // Every chunk put, and whether it was taken at least once.
-  folly::F14FastMap<kiln::ChunkId, bool> chunks;
+  // Every chunk put.
+  folly::F14FastMap<kiln::ChunkId, Chunk> chunks;
   std::deque<kiln::ChunkId> queue;
   folly::F14FastMap<kiln::ChunkId, Lease> leases;
   std::list<std::shared_ptr<Waiter>> waiters;
+  // Producers waiting for chunks' acks.
+  folly::F14FastMap<kiln::ChunkId, ConsumedWaiters> consumedWaiters;
   ShardStats stats;
   // No longer in the registry.
   bool removed{false};
@@ -67,9 +83,9 @@ struct Shard::Stream {
   }
 
   void lease(kiln::ChunkId chunk, const Epoch& epoch, Clock::duration timeout) {
-    auto& taken = chunks[chunk];
-    if (!taken) {
-      taken = true;
+    auto& entry = chunks[chunk];
+    if (!entry.taken) {
+      entry.taken = true;
       ++stats.taken;
     }
     leases[chunk] = Lease{epoch, Clock::now() + timeout};
@@ -210,7 +226,7 @@ folly::coro::Task<bool> Shard::co_put(std::string stream, kiln::ChunkId chunk) {
     if (state->removed) {
       throw kiln::Error(kiln::ErrorCode::kNotFound, "no stream " + stream);
     }
-    if (!state->chunks.emplace(chunk, false).second) {
+    if (!state->chunks.emplace(chunk, Stream::Chunk{}).second) {
       ++state->stats.duplicates;
       co_return false;
     }
@@ -283,6 +299,7 @@ folly::coro::Task<void> Shard::co_ack(
     std::vector<kiln::ChunkId> chunks) {
   auto state = co_await co_stream(stream);
   Waiters done;
+  ConsumedWaiters consumed;
   {
     std::lock_guard lock(state->mutex);
     for (const auto& chunk : chunks) {
@@ -290,12 +307,74 @@ folly::coro::Task<void> Shard::co_ack(
       if (it != state->leases.end() && it->second.epoch == epoch) {
         state->leases.erase(it);
         ++state->stats.acked;
+        state->chunks[chunk].consumed = true;
+        auto waiting = state->consumedWaiters.find(chunk);
+        if (waiting != state->consumedWaiters.end()) {
+          for (auto& waiter : waiting->second) {
+            waiter->done = true;
+            consumed.push_back(std::move(waiter));
+          }
+          state->consumedWaiters.erase(waiting);
+        }
       }
     }
     // The last acks may end a sealed stream.
     done = state->dispatch(options_.leaseTimeout);
   }
   wake(done);
+  wake(consumed);
+}
+
+folly::coro::Task<bool> Shard::co_awaitConsumed(
+    std::string stream,
+    kiln::ChunkId chunk,
+    std::chrono::milliseconds wait) {
+  if (wait.count() < 0 || wait > options_.maxWait) {
+    throw kiln::Error(
+        kiln::ErrorCode::kInvalidArgument,
+        "awaitConsumed waits at most " +
+            std::to_string(options_.maxWait.count()) + " ms");
+  }
+  auto state = co_await co_stream(stream);
+  auto waiter = std::make_shared<ConsumedWaiter>();
+  {
+    std::lock_guard lock(state->mutex);
+    if (state->removed) {
+      throw kiln::Error(kiln::ErrorCode::kNotFound, "no stream " + stream);
+    }
+    auto it = state->chunks.find(chunk);
+    if (it == state->chunks.end()) {
+      throw kiln::Error(
+          kiln::ErrorCode::kNotFound,
+          "no chunk " + chunk.toString() + " in stream " + stream);
+    }
+    if (it->second.consumed || wait.count() == 0) {
+      co_return it->second.consumed;
+    }
+    state->consumedWaiters[chunk].push_back(waiter);
+  }
+  // As in co_take: ends the wait unless the ack did first.
+  folly::futures::sleep(wait).toUnsafeFuture().thenValue(
+      [state, waiter, chunk](auto&&) {
+        {
+          std::lock_guard lock(state->mutex);
+          if (waiter->done) {
+            return;
+          }
+          waiter->done = true;
+          auto it = state->consumedWaiters.find(chunk);
+          if (it != state->consumedWaiters.end()) {
+            std::erase(it->second, waiter);
+            if (it->second.empty()) {
+              state->consumedWaiters.erase(it);
+            }
+          }
+        }
+        waiter->baton.post();
+      });
+  co_await waiter->baton;
+  std::lock_guard lock(state->mutex);
+  co_return state->chunks[chunk].consumed;
 }
 
 folly::coro::Task<uint64_t> Shard::co_release(std::string stream, Epoch epoch) {

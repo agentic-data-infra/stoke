@@ -30,6 +30,7 @@ TEST_F(RegistryTest, createsSealsAndRemoves) {
       blockingWait(registry_.co_create("s", {"a:1", "b:2"}, 0.9));
   EXPECT_NE(created.bucket, kiln::kDefaultBucket);
   EXPECT_EQ(created.state, StreamState::kOpen);
+  EXPECT_EQ(created.taskBudget, 0);
   EXPECT_EQ(blockingWait(registry_.co_get("s")), created);
   EXPECT_EQ(blockingWait(registry_.co_list()), std::vector<std::string>{"s"});
 
@@ -43,6 +44,11 @@ TEST_F(RegistryTest, createsSealsAndRemoves) {
   // The bucket went with it.
   EXPECT_FALSE(
       blockingWait(registry_.kiln().co_deleteBucket(created.bucket)));
+}
+
+TEST_F(RegistryTest, keepsTheTaskBudget) {
+  blockingWait(registry_.co_create("s", {"a:1"}, 0.95, 8));
+  EXPECT_EQ(blockingWait(registry_.co_get("s"))->taskBudget, 8);
 }
 
 TEST_F(RegistryTest, rejectsBadStreams) {

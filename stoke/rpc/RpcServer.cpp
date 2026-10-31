@@ -71,6 +71,20 @@ class ShardService
         std::move(*stream), fromThrift(*epoch), fromThrift(*chunks)));
   }
 
+  folly::coro::Task<bool> co_awaitConsumed(
+      std::unique_ptr<std::string> stream,
+      std::unique_ptr<thrift::ChunkId> chunk,
+      int64_t waitMs) override {
+    if (waitMs < 0) {
+      throw toThrift(
+          kiln::Error(kiln::ErrorCode::kInvalidArgument, "Negative wait"));
+    }
+    co_return co_await guarded(shard_->co_awaitConsumed(
+        std::move(*stream),
+        fromThrift(*chunk),
+        std::chrono::milliseconds(waitMs)));
+  }
+
   folly::coro::Task<int64_t> co_release(
       std::unique_ptr<std::string> stream,
       std::unique_ptr<thrift::Epoch> epoch) override {

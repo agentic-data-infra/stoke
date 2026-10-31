@@ -19,7 +19,8 @@ Registry::~Registry() = default;
 folly::coro::Task<StreamInfo> Registry::co_create(
     std::string name,
     std::vector<std::string> shards,
-    double stopFraction) {
+    double stopFraction,
+    uint32_t taskBudget) {
   auto refName = streamRefName(name);
   if (shards.empty()) {
     throw kiln::Error(
@@ -30,7 +31,10 @@ folly::coro::Task<StreamInfo> Registry::co_create(
         kiln::ErrorCode::kInvalidArgument,
         "stopFraction must be in (0, 1]");
   }
-  StreamInfo info{.shards = std::move(shards), .stopFraction = stopFraction};
+  StreamInfo info{
+      .shards = std::move(shards),
+      .stopFraction = stopFraction,
+      .taskBudget = taskBudget};
   // Checks the size before making a bucket.
   info.encode();
   info.bucket = co_await kiln_->co_createBucket();
