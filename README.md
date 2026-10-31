@@ -23,9 +23,11 @@ the producers, Kiln and the trainers.
   stoke adds one Kiln ref per stream and no other load on Kiln's metadata
   server.
 
-Status: in development. There are shard servers, the `stoke` CLI, the
-batch format and the dataloader (C++, with a PyTorch `IterableDataset`);
-next come a `stoke://` file system in Ember, and examples.
+Status: v1. There are shard servers, the `stoke` CLI, the batch format,
+the dataloader (C++, with a PyTorch `IterableDataset`), a benchmark, and
+an end-to-end example where an Ember job feeds a nanoGPT-style trainer.
+Ember writes streams with `Dataframe.write.stream` (in Ember, built with
+`-c ember.stoke=true`).
 
 ## Streams
 
@@ -144,6 +146,31 @@ can no longer keep up; then they wait parked at shards, not polling. Kiln
 stores chunks in whole 1 MiB blocks and reuses the blocks of removed
 chunks only after its grace period (30 s by default), so DRAM needs room
 for that much throughput beyond the backlog; the benchmark uses 1 s.
+
+## Example: Ember feeds nanoGPT
+
+`examples/nanogpt/run.sh` starts a Kiln cluster and two shards, creates a
+stream, and runs at the same time:
+
+- the feed (`feed.py`), an Ember job over FineWeb-Edu:
+  `read.parquet → filter(int_score >= 4) → stoke_pack(stoke_tokenize(text), B, T)
+  → write.stream("fineweb")`. `stoke_tokenize` makes byte tokens
+  (vocabulary 257); `stoke_pack` makes one int32 `[b ≤ B, T + 1]` batch per
+  document. Each scan task puts a chunk into the stream every 4 MiB of
+  batches (`--chunk_mb`), while the job runs;
+- the trainer (`train.py`), a small GPT under `torchrun` (CPU, gloo), each
+  rank reading its batches with `StokeDataset`.
+
+Once the feed is done the script seals the stream; the ranks stop together
+when it ends (or after `MAX_STEPS`) and print how long each waited for
+data.
+
+```
+# Ember's Python module, with stoke:
+(cd ~/source/ember && buck2 build -c ember.stoke=true //python:_ember --out python/ember/_ember.so)
+buck2 build //python:_stoke --out python/stoke/_stoke.so
+examples/nanogpt/run.sh                     # RANKS=4 MAX_STEPS=1000 ...
+```
 
 ## Building
 
