@@ -29,11 +29,12 @@ class Registry {
 
   // Creates an open stream over 'shards' ("host:port"), with a new Kiln
   // bucket for its chunks. Throws kiln::Error(kInvalidArgument) if the name
-  // is taken or there are no shards.
+  // is taken or there are no shards. 'taskBudget' is StreamInfo::taskBudget.
   folly::coro::Task<StreamInfo> co_create(
       std::string name,
       std::vector<std::string> shards,
-      double stopFraction = 0.95);
+      double stopFraction = 0.95,
+      uint32_t taskBudget = 0);
 
   // The stream's entry, or nullopt if there is none.
   folly::coro::Task<std::optional<StreamInfo>> co_get(std::string name);

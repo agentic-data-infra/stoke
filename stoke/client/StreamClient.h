@@ -48,6 +48,12 @@ class StreamClient {
   // Queues 'chunk' at its shard (shardOf). Returns false for a duplicate.
   folly::coro::Task<bool> co_put(kiln::ChunkId chunk);
 
+  // Whether 'chunk' was consumed, waiting up to 'wait' at its shard (see
+  // ShardRpc::co_awaitConsumed).
+  folly::coro::Task<bool> co_awaitConsumed(
+      kiln::ChunkId chunk,
+      std::chrono::milliseconds wait);
+
   // Each shard's stats, in shard order.
   folly::coro::Task<std::vector<ShardStats>> co_stats();
 

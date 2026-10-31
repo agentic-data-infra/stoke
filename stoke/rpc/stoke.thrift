@@ -72,6 +72,12 @@ service ShardService {
     3: list<ChunkId> chunks,
   ) throws (1: StokeException e);
 
+  bool awaitConsumed(
+    1: string streamName,
+    2: ChunkId chunk,
+    3: i64 waitMs,
+  ) throws (1: StokeException e);
+
   i64 release(1: string streamName, 2: Epoch epoch) throws (
     1: StokeException e,
   );

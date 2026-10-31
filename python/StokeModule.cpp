@@ -262,16 +262,18 @@ PYBIND11_MODULE(_stoke, m) {
       [](const std::string& metadata,
          std::string stream,
          std::vector<std::string> shards,
-         double stopFraction) {
+         double stopFraction,
+         uint32_t taskBudget) {
         py::gil_scoped_release release;
         Registry registry(connectKiln(metadata));
         folly::coro::blockingWait(registry.co_create(
-            std::move(stream), std::move(shards), stopFraction));
+            std::move(stream), std::move(shards), stopFraction, taskBudget));
       },
       py::arg("metadata"),
       py::arg("stream"),
       py::arg("shards"),
-      py::arg("stop_fraction") = 0.95);
+      py::arg("stop_fraction") = 0.95,
+      py::arg("task_budget") = 0);
   m.def(
       "seal_stream",
       [](const std::string& metadata, std::string stream) {

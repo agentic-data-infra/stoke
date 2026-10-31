@@ -141,6 +141,16 @@ class RemoteShard : public ShardRpc {
         client, client->co_ack(stream, request, ids));
   }
 
+  folly::coro::Task<bool> co_awaitConsumed(
+      std::string stream,
+      kiln::ChunkId chunk,
+      std::chrono::milliseconds wait) override {
+    const auto request = toThrift(chunk);
+    auto client = connection_.client();
+    co_return co_await connection_.translated(
+        client, client->co_awaitConsumed(stream, request, wait.count()));
+  }
+
   folly::coro::Task<uint64_t> co_release(std::string stream, Epoch epoch)
       override {
     const auto request = toThrift(epoch);

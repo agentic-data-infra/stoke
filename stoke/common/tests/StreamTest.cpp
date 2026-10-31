@@ -12,9 +12,16 @@ TEST(StreamTest, encodesAndDecodes) {
       .bucket = 42,
       .shards = {"host-a:7480", "host-b:7480"},
       .state = StreamState::kSealed,
-      .stopFraction = 0.9};
+      .stopFraction = 0.9,
+      .taskBudget = 4};
   EXPECT_EQ(StreamInfo::decode(info.encode()), info);
   EXPECT_EQ(StreamInfo::decode(StreamInfo{}.encode()), StreamInfo{});
+  // Entries written before the budget existed have none.
+  EXPECT_EQ(
+      StreamInfo::decode(
+          R"({"bucket":1,"shards":["a:1"],"state":"open","stopFraction":1})")
+          .taskBudget,
+      0);
 }
 
 TEST(StreamTest, rejectsMalformedInfo) {

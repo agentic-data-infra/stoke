@@ -35,7 +35,9 @@ Ember writes streams with `Dataframe.write.stream` (in Ember, built with
 A stream's registry entry is the Kiln ref `stream/<name>`, whose value is
 JSON: the Kiln bucket of its chunks, its shards' endpoints, its state
 (`open` or `sealed`) and the fraction of chunks after which shards end a
-sealed stream (`stopFraction`, so that ranks stop together). See
+sealed stream (`stopFraction`, so that ranks stop together), and the
+chunks each producer may have put and not yet seen consumed (`taskBudget`,
+`stoke create --task_budget`; 0 for no limit). See
 [stoke/common/Stream.h](stoke/common/Stream.h).
 
 ## Shards
@@ -52,6 +54,9 @@ the API is [stoke/rpc/ShardRpc.h](stoke/rpc/ShardRpc.h), over fbthrift):
 - `co_ack(stream, epoch, chunks)` ends leases; `co_release(stream, epoch)`
   queues all of an epoch's leased chunks again, for a restarted consumer.
   Leases not acked within `--lease_timeout_s` are queued again too.
+- `co_awaitConsumed(stream, chunk, wait)` says whether a chunk was acked,
+  parking for up to `wait` until it is, for producers keeping to the
+  stream's `taskBudget`.
 - Once a stream is sealed, a shard ends it (`take` returns `end`) when it
   handed out `stopFraction` of its chunks, or all of them.
 - `co_stats(stream)`: depth, leased, waiting takes, chunks put, taken and

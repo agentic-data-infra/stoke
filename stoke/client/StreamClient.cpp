@@ -40,6 +40,13 @@ folly::coro::Task<bool> StreamClient::co_put(kiln::ChunkId chunk) {
   co_return co_await shard.co_put(stream_, chunk);
 }
 
+folly::coro::Task<bool> StreamClient::co_awaitConsumed(
+    kiln::ChunkId chunk,
+    std::chrono::milliseconds wait) {
+  auto& shard = *shards_[shardOf(chunk, numShards())];
+  co_return co_await shard.co_awaitConsumed(stream_, chunk, wait);
+}
+
 folly::coro::Task<std::vector<ShardStats>> StreamClient::co_stats() {
   std::vector<folly::coro::Task<ShardStats>> calls;
   calls.reserve(shards_.size());

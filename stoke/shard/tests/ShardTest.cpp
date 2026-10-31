@@ -116,6 +116,69 @@ TEST_F(ShardTest, waitingTakeTimesOut) {
   EXPECT_EQ(blockingWait(shard->co_stats("s")).depth, 1);
 }
 
+TEST_F(ShardTest, awaitConsumedSeesAcks) {
+  auto shard = makeShard();
+  blockingWait(shard->co_put("s", chunk(1)));
+  blockingWait(shard->co_put("s", chunk(2)));
+  EXPECT_FALSE(blockingWait(shard->co_awaitConsumed("s", chunk(1), {})));
+
+  auto taken = blockingWait(shard->co_take("s", kEpoch, 2, milliseconds(0)));
+  // Taken is not consumed, and nor is a released chunk.
+  EXPECT_FALSE(blockingWait(shard->co_awaitConsumed("s", chunk(1), {})));
+  blockingWait(shard->co_ack("s", kEpoch, {chunk(1)}));
+  blockingWait(shard->co_release("s", kEpoch));
+  EXPECT_TRUE(blockingWait(shard->co_awaitConsumed("s", chunk(1), {})));
+  EXPECT_FALSE(blockingWait(shard->co_awaitConsumed("s", chunk(2), {})));
+}
+
+TEST_F(ShardTest, awaitConsumedWaitsForTheAck) {
+  auto shard = makeShard();
+  blockingWait(shard->co_put("s", chunk(1)));
+  blockingWait(shard->co_take("s", kEpoch, 1, milliseconds(0)));
+  std::thread consumer([&] {
+    std::this_thread::sleep_for(milliseconds(100));
+    blockingWait(shard->co_ack("s", kEpoch, {chunk(1)}));
+  });
+  auto start = std::chrono::steady_clock::now();
+  EXPECT_TRUE(blockingWait(
+      shard->co_awaitConsumed("s", chunk(1), std::chrono::seconds(5))));
+  auto waited = std::chrono::steady_clock::now() - start;
+  consumer.join();
+  EXPECT_GE(waited, milliseconds(50));
+  EXPECT_LT(waited, std::chrono::seconds(4));
+}
+
+TEST_F(ShardTest, awaitConsumedTimesOut) {
+  auto shard = makeShard();
+  blockingWait(shard->co_put("s", chunk(1)));
+  auto start = std::chrono::steady_clock::now();
+  EXPECT_FALSE(blockingWait(
+      shard->co_awaitConsumed("s", chunk(1), milliseconds(100))));
+  EXPECT_GE(std::chrono::steady_clock::now() - start, milliseconds(100));
+  // A later ack still counts.
+  blockingWait(shard->co_take("s", kEpoch, 1, milliseconds(0)));
+  blockingWait(shard->co_ack("s", kEpoch, {chunk(1)}));
+  EXPECT_TRUE(blockingWait(shard->co_awaitConsumed("s", chunk(1), {})));
+}
+
+TEST_F(ShardTest, awaitConsumedRejectsUnknownChunksAndLongWaits) {
+  auto shard = makeShard();
+  try {
+    blockingWait(shard->co_awaitConsumed("s", chunk(9), {}));
+    FAIL();
+  } catch (const kiln::Error& e) {
+    EXPECT_EQ(e.code(), kiln::ErrorCode::kNotFound);
+  }
+  blockingWait(shard->co_put("s", chunk(1)));
+  try {
+    blockingWait(
+        shard->co_awaitConsumed("s", chunk(1), std::chrono::minutes(1)));
+    FAIL();
+  } catch (const kiln::Error& e) {
+    EXPECT_EQ(e.code(), kiln::ErrorCode::kInvalidArgument);
+  }
+}
+
 TEST_F(ShardTest, releaseReturnsAnEpochsLeases) {
   auto shard = makeShard();
   for (uint64_t i = 0; i < 4; ++i) {

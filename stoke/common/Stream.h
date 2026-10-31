@@ -31,6 +31,9 @@ struct StreamInfo {
   // handed out this fraction of its chunks, so that ranks stop together
   // rather than wait for the last stragglers.
   double stopFraction{0.95};
+  // Chunks each producer (e.g. each Ember task) may have put and not yet
+  // seen consumed; before writing more it waits (Producer). 0 for no limit.
+  uint32_t taskBudget{0};
 
   // Throws kiln::Error(kInvalidArgument) if the JSON does not fit a Kiln
   // ref value (kiln::kMaxRefValueSize, a few dozen shards).
