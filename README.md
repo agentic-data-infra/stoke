@@ -55,8 +55,11 @@ the API is [stoke/rpc/ShardRpc.h](stoke/rpc/ShardRpc.h), over fbthrift):
   queues all of an epoch's leased chunks again, for a restarted consumer.
   Leases not acked within `--lease_timeout_s` are queued again too.
 - `co_awaitConsumed(stream, chunk, wait)` says whether a chunk was acked,
-  parking for up to `wait` until it is, for producers keeping to the
-  stream's `taskBudget`.
+  parking for up to `wait` until it is. A producer
+  ([stoke/client/Producer.h](stoke/client/Producer.h), one per Ember task)
+  with `taskBudget` chunks put and not yet acked waits on its oldest before
+  writing the next: that is the stream's backpressure, and the writer just
+  sees its put take longer.
 - Once a stream is sealed, a shard ends it (`take` returns `end`) when it
   handed out `stopFraction` of its chunks, or all of them.
 - `co_stats(stream)`: depth, leased, waiting takes, chunks put, taken and
