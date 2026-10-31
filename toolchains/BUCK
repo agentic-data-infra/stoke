@@ -1,0 +1,46 @@
+load("@prelude//tests:test_toolchain.bzl", "noop_test_toolchain")
+load("@prelude//toolchains:cxx.bzl", "system_cxx_toolchain")
+load("@prelude//toolchains:genrule.bzl", "system_genrule_toolchain")
+load("@prelude//toolchains:python.bzl", "system_python_bootstrap_toolchain")
+load("@prelude//toolchains:remote_test_execution.bzl", "remote_test_execution_toolchain")
+
+# GCC 12, as folly and fbthrift are built with (scripts/gen_third_party.py).
+# GCC 11 miscompiles co_await in coroutine templates with this folly, which
+# rules out e.g. fbthrift's generated co_* clients.
+system_cxx_toolchain(
+    name = "cxx",
+    compiler = "gcc-12",
+    compiler_type = "gcc",
+    cxx_compiler = "g++-12",
+    linker = "g++-12",
+    cxx_flags = [
+        "-std=c++20",
+        "-fcoroutines",
+        # The prelude adds no optimization flags of its own.
+        "-O2",
+    ],
+    # The prelude asks for lld with any compiler but "g++"; use GNU ld.
+    link_flags = ["-fuse-ld=bfd"],
+    link_style = "static",
+    visibility = ["PUBLIC"],
+)
+
+system_genrule_toolchain(
+    name = "genrule",
+    visibility = ["PUBLIC"],
+)
+
+system_python_bootstrap_toolchain(
+    name = "python_bootstrap",
+    visibility = ["PUBLIC"],
+)
+
+noop_test_toolchain(
+    name = "test",
+    visibility = ["PUBLIC"],
+)
+
+remote_test_execution_toolchain(
+    name = "remote_test_execution",
+    visibility = ["PUBLIC"],
+)
