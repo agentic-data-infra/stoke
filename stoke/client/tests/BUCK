@@ -23,3 +23,16 @@ cxx_test(
     ],
     link_ordering = "topological",
 )
+
+cxx_test(
+    name = "producer_test",
+    srcs = ["ProducerTest.cpp"],
+    deps = [
+        "//stoke/client:producer",
+        "//stoke/shard:shard",
+        "//stoke/tests:test_main",
+        "kiln//kiln/client:client",
+        "kiln//kiln/local:local",
+    ],
+    link_ordering = "topological",
+)
