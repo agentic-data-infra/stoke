@@ -159,6 +159,22 @@ stores chunks in whole 1 MiB blocks and reuses the blocks of removed
 chunks only after its grace period (30 s by default), so DRAM needs room
 for that much throughput beyond the backlog; the benchmark uses 1 s.
 
+`--task_budget` bounds each producer (a Producer per producer thread, as
+per Ember task) to that many chunks put and not yet consumed, and the
+benchmark prints the most chunks the stream held unconsumed and how long
+producers waited. With producers far faster than 2 consumers (300 chunks
+of 1 MiB, 4 batches each, a 5 ms step, `--max_buffered_batches=16`):
+
+| task budget | chunks/s | most unconsumed | producers waited | starved (mean) |
+|---:|---:|---:|---:|---:|
+| none | 98 | 286 | 0% | 0.7% |
+| 2 | 95 | 8 | 91% | 2.8% |
+| 4 | 97 | 16 | 90% | 0.7% |
+
+The stream never holds more than producers × budget chunks, at the
+consumers' pace; a budget of 2 is too small to keep 2 consumers fed, 4 is
+enough.
+
 ## Example: Ember feeds nanoGPT
 
 `examples/nanogpt/run.sh` starts a Kiln cluster and two shards, creates a
@@ -173,7 +189,9 @@ stream, and runs at the same time:
 - the trainer (`train.py`), a small GPT under `torchrun` (CPU, gloo), each
   rank reading its batches with `StokeDataset`.
 
-Once the feed is done the script seals the stream; the ranks stop together
+The stream has a task budget (`TASK_BUDGET`, 4): each feed task waits
+once it has 4 chunks not yet consumed, so the feed runs at the trainer's
+pace. The feed seals the stream when its job commits; the ranks stop together
 when it ends (or after `MAX_STEPS`) and print how long each waited for
 data.
 

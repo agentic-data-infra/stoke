@@ -3,7 +3,8 @@
 //   stoke_bench [--consumers=1,2,4,8] [--producers=4] [--shards=4]
 //               [--chunks=500] [--chunk_kb=4096] [--batches_per_chunk=4]
 //               [--step_us=0] [--fetchers=2] [--wait_ms=100]
-//               [--produce_rate=0] [--dram_mb=0]
+//               [--produce_rate=0] [--dram_mb=0] [--task_budget=0]
+//               [--min_buffered_batches=64] [--max_buffered_batches=0]
 //
 // For each number of consumers, producers put --chunks chunks of int32
 // batches as fast as they can (or --produce_rate chunks/s in all), the
@@ -13,9 +14,13 @@
 // --shards shard servers in this process, reached over TCP like remote
 // ones. Kiln's grace period is short (--grace_ms), as consumers remove
 // chunks once read and DRAM would otherwise hold them that much longer.
+// Each producer thread has a Producer of its own, as each Ember task does:
+// with --task_budget N it has at most N chunks put and not yet consumed.
 // Prints per run: chunks/s and GB/s consumed, mean take time
-// (including parked waits), the share of empty takes, and the fraction of
-// time consumers starved in next(), on average and at worst.
+// (including parked waits), the share of empty takes, the fraction of
+// time consumers starved in next(), on average and at worst, the share of
+// time producers waited for their budget, and the most chunks the stream
+// held unconsumed (put and not acked, sampled every 10 ms).
 
 #include <atomic>
 #include <cstring>
@@ -45,6 +50,16 @@ DEFINE_int32(fetchers, 2, "Fetcher threads per consumer.");
 DEFINE_int32(wait_ms, 100, "How long takes park at a shard.");
 DEFINE_int32(produce_rate, 0, "Chunks per second in all; 0 for no limit.");
 DEFINE_int32(dram_mb, 0, "Kiln DRAM; 0 for room for all chunks of a run.");
+DEFINE_uint32(
+    task_budget,
+    0,
+    "Chunks each producer may have put and not yet consumed; 0 for no "
+    "limit.");
+DEFINE_uint64(min_buffered_batches, 64, "Each consumer's minimum buffer.");
+DEFINE_uint64(
+    max_buffered_batches,
+    0,
+    "Each consumer's maximum buffer; 0 for none.");
 DEFINE_int32(
     grace_ms,
     1000,
@@ -68,6 +83,10 @@ struct RunResult {
   std::chrono::nanoseconds takeTime{0};
   double meanStarved{0};
   double maxStarved{0};
+  // Share of the producers' time spent waiting for their budget.
+  double producersWaited{0};
+  // Most chunks put and not acked.
+  uint64_t peakUnconsumed{0};
 };
 
 // A chunk of int32 batches whose tokens all hold 'index', so that every
@@ -126,10 +145,10 @@ class Bench {
 
   RunResult run(int consumers) {
     const auto name = "bench-" + std::to_string(consumers);
-    blockingWait(registry_->co_create(name, endpoints_, 1.0));
+    blockingWait(
+        registry_->co_create(name, endpoints_, 1.0, FLAGS_task_budget));
     std::shared_ptr<StreamClient> stream =
         blockingWait(StreamClient::co_open(registry_, name));
-    auto producer = std::make_shared<Producer>(stream, kiln_);
 
     std::vector<std::unique_ptr<Loader>> loaders;
     for (int c = 0; c < consumers; ++c) {
@@ -139,6 +158,8 @@ class Bench {
           LoaderOptions{
               .epoch = {"bench-consumer" + std::to_string(c), 0},
               .fetchers = static_cast<uint32_t>(FLAGS_fetchers),
+              .minBufferedBatches = FLAGS_min_buffered_batches,
+              .maxBufferedBatches = FLAGS_max_buffered_batches,
               .wait = std::chrono::milliseconds(FLAGS_wait_ms)}));
     }
     const auto start = Clock::now();
@@ -156,10 +177,27 @@ class Bench {
       });
     }
 
+    std::atomic<bool> done{false};
+    std::atomic<uint64_t> peakUnconsumed{0};
+    std::thread sampler([&] {
+      while (!done) {
+        uint64_t unconsumed = 0;
+        for (const auto& stats : blockingWait(stream->co_stats())) {
+          unconsumed += stats.put - stats.acked;
+        }
+        peakUnconsumed = std::max<uint64_t>(peakUnconsumed, unconsumed);
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+      }
+    });
+
     std::atomic<uint32_t> next{0};
+    std::vector<std::shared_ptr<Producer>> producerOf;
+    for (int p = 0; p < FLAGS_producers; ++p) {
+      producerOf.push_back(std::make_shared<Producer>(stream, kiln_));
+    }
     std::vector<std::thread> producers;
     for (int p = 0; p < FLAGS_producers; ++p) {
-      producers.emplace_back([&] {
+      producers.emplace_back([&, producer = producerOf[p]] {
         uint32_t index;
         while ((index = next++) < static_cast<uint32_t>(FLAGS_chunks)) {
           if (FLAGS_produce_rate > 0) {
@@ -179,10 +217,18 @@ class Bench {
     for (auto& thread : threads) {
       thread.join();
     }
+    done = true;
+    sampler.join();
 
     RunResult result;
     result.seconds =
         std::chrono::duration<double>(Clock::now() - start).count();
+    result.peakUnconsumed = peakUnconsumed;
+    for (const auto& producer : producerOf) {
+      result.producersWaited +=
+          std::chrono::duration<double>(producer->waited()).count() /
+          (result.seconds * FLAGS_producers);
+    }
     for (int c = 0; c < consumers; ++c) {
       const auto stats = loaders[c]->stats();
       result.chunks += stats.chunks;
@@ -217,15 +263,17 @@ int main() {
   Bench bench;
   fmt::print(
       "{} chunks of {} KiB ({} batches), {} producers, {} shards, "
-      "step {} us\n",
+      "step {} us, task budget {}\n",
       FLAGS_chunks,
       FLAGS_chunk_kb,
       FLAGS_batches_per_chunk,
       FLAGS_producers,
       FLAGS_shards,
-      FLAGS_step_us);
+      FLAGS_step_us,
+      FLAGS_task_budget);
   fmt::print(
-      "{:>9} {:>9} {:>9} {:>8} {:>11} {:>8} {:>13} {:>12} {:>5}\n",
+      "{:>9} {:>9} {:>9} {:>8} {:>11} {:>8} {:>13} {:>12} {:>5} {:>13} "
+      "{:>11}\n",
       "consumers",
       "seconds",
       "chunks/s",
@@ -234,7 +282,9 @@ int main() {
       "empty %",
       "starved mean",
       "starved max",
-      "lost");
+      "lost",
+      "prod waited",
+      "unconsumed");
   for (int consumers : counts) {
     const auto r = bench.run(consumers);
     const double takeMs = r.takes == 0
@@ -243,7 +293,7 @@ int main() {
             r.takes;
     fmt::print(
         "{:>9} {:>9.2f} {:>9.0f} {:>8.2f} {:>11.3f} {:>8.1f} {:>12.1f}% "
-        "{:>11.1f}% {:>5}\n",
+        "{:>11.1f}% {:>5} {:>12.1f}% {:>11}\n",
         consumers,
         r.seconds,
         r.chunks / r.seconds,
@@ -252,7 +302,9 @@ int main() {
         r.takes == 0 ? 0.0 : 100.0 * r.emptyTakes / r.takes,
         100 * r.meanStarved,
         100 * r.maxStarved,
-        r.lost);
+        r.lost,
+        100 * r.producersWaited,
+        r.peakUnconsumed);
   }
   return 0;
 }

@@ -3,12 +3,15 @@
 # through a stoke stream, all on this machine:
 #
 #   1. a Kiln cluster (one DRAM server) and two stoke shards;
-#   2. `stoke create` of the stream;
+#   2. `stoke create` of the stream, with a task budget;
 #   3. the trainer (torchrun, RANKS ranks on CPU with gloo) and the Ember
-#      feed job (feed.py), at the same time;
-#   4. `stoke seal` once the feed is done; the ranks stop together when the
-#      stream ends (or after MAX_STEPS steps) and print how long each waited
-#      for data.
+#      feed job (feed.py), at the same time; each feed task waits once it
+#      has TASK_BUDGET chunks not yet consumed, so the feed runs at the
+#      trainer's pace;
+#   4. the feed seals the stream when its job commits; the ranks stop
+#      together when the stream ends (or after MAX_STEPS steps) and print
+#      how long each waited for data. A feed still waiting for the trainer
+#      then is stopped.
 #
 # Usage: examples/nanogpt/run.sh [PARQUET]
 #   (default ~/data/fineweb-edu/raw/sample/10BT/000_00000.parquet)
@@ -22,7 +25,9 @@
 #   buck2 build -c ember.stoke=true //python:_ember --out python/ember/_ember.so
 # Environment: RANKS (2), MAX_STEPS (0: until the stream ends), KILN_PORT
 # (7570), SHARD_PORT (7580, and the next one), STREAM (fineweb),
-# EMBER_PYTHON (Ember's .venv), FEED_ARGS (more feed.py flags).
+# EMBER_PYTHON (Ember's .venv), FEED_ARGS (more feed.py flags), TASK_BUDGET
+# (4: chunks each feed task may have put and not yet consumed; 0 for no
+# limit).
 
 set -euo pipefail
 
@@ -71,7 +76,8 @@ for i in 0 1; do
   shards+=("127.0.0.1:$port")
 done
 until grep -q "Shard at" "$work/shard1.log" 2>/dev/null; do sleep 0.1; done
-"$stoke_bin" create "$stream" --shards="$(IFS=,; echo "${shards[*]}")" >/dev/null
+"$stoke_bin" create "$stream" --shards="$(IFS=,; echo "${shards[*]}")" \
+  --task_budget="${TASK_BUDGET:-4}" >/dev/null
 
 PYTHONPATH=$root/python:$example "$root/.venv/bin/torchrun" \
   --nproc_per_node="$ranks" "$example/train.py" \
@@ -81,8 +87,14 @@ pids+=($trainer)
 
 # shellcheck disable=SC2086
 "$ember_python" "$example/feed.py" "$input_dir" "$stream" \
-  --metadata="$metadata" ${FEED_ARGS:-}
-"$stoke_bin" seal "$stream"
+  --metadata="$metadata" ${FEED_ARGS:-} &
+feed=$!
+pids+=($feed)
 wait "$trainer"
+if kill -0 "$feed" 2>/dev/null; then
+  echo "feed: stopped, the trainer is done"
+  kill "$feed"
+fi
+wait "$feed" || true
 "$stoke_bin" stats "$stream"
 "$stoke_bin" rm "$stream"
