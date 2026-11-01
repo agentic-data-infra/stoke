@@ -23,7 +23,7 @@ Producer::Producer(
       placement_{placement},
       budget_{stream_->info().taskBudget} {}
 
-folly::coro::Task<void> Producer::co_awaitBudget() {
+folly::coro::Task<void> Producer::co_awaitUnconsumedBelow(size_t limit) {
   if (budget_ == 0) {
     co_return;
   }
@@ -32,7 +32,7 @@ folly::coro::Task<void> Producer::co_awaitBudget() {
     kiln::ChunkId oldest;
     {
       std::lock_guard lock(mutex_);
-      if (unconsumed_.size() < budget_) {
+      if (unconsumed_.size() < limit) {
         break;
       }
       oldest = unconsumed_.front();
@@ -61,7 +61,7 @@ folly::coro::Task<void> Producer::co_awaitBudget() {
 }
 
 folly::coro::Task<kiln::ChunkId> Producer::co_put(std::string_view chunk) {
-  co_await co_awaitBudget();
+  co_await co_awaitUnconsumedBelow(budget_);
   auto writer = co_await kiln_->co_create(
       stream_->info().bucket, placement_, chunk.size());
   if (!chunk.empty()) {
@@ -77,6 +77,10 @@ folly::coro::Task<kiln::ChunkId> Producer::co_put(std::string_view chunk) {
     unconsumed_.push_back(id);
   }
   co_return id;
+}
+
+folly::coro::Task<void> Producer::co_drain() {
+  co_await co_awaitUnconsumedBelow(1);
 }
 
 size_t Producer::unconsumed() const {

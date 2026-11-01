@@ -86,6 +86,8 @@ TEST_F(ProducerTest, withoutABudgetNeverWaits) {
   EXPECT_EQ(producer->unconsumed(), 0);
   EXPECT_EQ(producer->waited().count(), 0);
   EXPECT_EQ(unacked(), 10);
+  // Nothing is tracked, so there is nothing to drain.
+  blockingWait(producer->co_drain());
 }
 
 TEST_F(ProducerTest, waitsAtTheBudgetUntilTheOldestIsConsumed) {
@@ -108,6 +110,23 @@ TEST_F(ProducerTest, waitsAtTheBudgetUntilTheOldestIsConsumed) {
   EXPECT_EQ(producer->unconsumed(), 2);
   EXPECT_EQ(unacked(), 2);
   EXPECT_GE(producer->waited(), milliseconds(150));
+}
+
+TEST_F(ProducerTest, drainWaitsUntilEveryChunkIsConsumed) {
+  auto producer = makeProducer(4);
+  auto first = blockingWait(producer->co_put("chunk0"));
+  auto second = blockingWait(producer->co_put("chunk1"));
+  std::atomic<bool> drained{false};
+  std::thread drain([&] {
+    blockingWait(producer->co_drain());
+    drained = true;
+  });
+  consume(first);
+  std::this_thread::sleep_for(milliseconds(200));
+  EXPECT_FALSE(drained);
+  consume(second);
+  drain.join();
+  EXPECT_EQ(producer->unconsumed(), 0);
 }
 
 // A producer far faster than its consumer never has more than the budget
