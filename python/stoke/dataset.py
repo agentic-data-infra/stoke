@@ -24,7 +24,8 @@ class StokeDataset(torch.utils.data.IterableDataset):
     'job' names the consumer and must differ between ranks, e.g.
     f"{run}-rank{rank}". Restart with a higher 'incarnation': chunks leased
     to the previous one go back to the stream. Other keyword arguments go to
-    Loader (fetchers, buffered_batches, chunks_per_take, wait_ms, ...).
+    Loader (fetchers, min_buffered_batches, max_buffered_batches,
+    chunks_per_take, wait_ms, ...).
     """
 
     def __init__(self, stream, *, job, incarnation=0, metadata=None, **options):
