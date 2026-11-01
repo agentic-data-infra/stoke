@@ -8,7 +8,9 @@ PARQUET is a file or a directory of files.
 Needs Ember's Python module built with stoke (-c ember.stoke=true), from
 $EMBER_HOME (default ~/source/ember). Each scan task frames its batches
 into chunks of --chunk_mb and puts each chunk into the stream as soon as
-it is written, so the trainer starts while the job runs.
+it is written, so the trainer starts while the job runs; with the
+stream's task budget a task waits for the trainer. The stream is sealed
+when the job commits.
 """
 
 import argparse
@@ -56,7 +58,7 @@ def main():
             ).alias("batch")
         )
         .filter(col("batch").isNotNull())
-        .write.stream(args.stream)
+        .write.stream(args.stream, seal=True)
     )
     print(f"feed: {batches} batches into {args.stream} in {time.time() - start:.1f} s")
     ember.stop()
