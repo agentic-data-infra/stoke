@@ -24,8 +24,10 @@ namespace stoke {
 // With a StreamInfo::taskBudget of N (as of the stream's co_open), a
 // producer has at most N chunks put and not yet consumed: before writing
 // the next one it waits until a consumer acks its oldest. That is the
-// stream's backpressure; the caller just sees co_put take longer. Thread
-// safe; concurrent callers share the budget.
+// stream's backpressure; the caller just sees co_put take longer. A task
+// calls co_drain before it ends, so that the next task in its slot starts
+// only once its chunks are consumed: then a worker has at most slots x N
+// chunks unconsumed. Thread safe; concurrent callers share the budget.
 class Producer {
  public:
   Producer(
@@ -41,6 +43,10 @@ class Producer {
   // chunk and puts it, once within the budget. Returns its id.
   folly::coro::Task<kiln::ChunkId> co_put(std::string_view chunk);
 
+  // Waits until every chunk put was consumed; returns at once without a
+  // budget.
+  folly::coro::Task<void> co_drain();
+
   // Chunks put and not yet seen consumed; counted only with a budget.
   size_t unconsumed() const;
 
@@ -48,8 +54,8 @@ class Producer {
   std::chrono::nanoseconds waited() const;
 
  private:
-  // Waits until fewer than the budget's chunks are unconsumed.
-  folly::coro::Task<void> co_awaitBudget();
+  // Waits until fewer than 'limit' chunks are unconsumed.
+  folly::coro::Task<void> co_awaitUnconsumedBelow(size_t limit);
 
   const std::shared_ptr<StreamClient> stream_;
   const std::shared_ptr<kiln::client::Client> kiln_;
