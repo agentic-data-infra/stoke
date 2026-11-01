@@ -125,6 +125,8 @@ py::dict statsDict(const LoaderStats& stats) {
       std::chrono::duration<double>(stats.takeTime).count();
   result["errors"] = stats.errors;
   result["lost_chunks"] = stats.lostChunks;
+  result["buffered"] = stats.buffered;
+  result["peak_buffered"] = stats.peakBuffered;
   result["wait_seconds"] =
       std::chrono::duration<double>(stats.waitTime).count();
   return result;
@@ -300,7 +302,8 @@ PYBIND11_MODULE(_stoke, m) {
                       std::string job,
                       uint64_t incarnation,
                       uint32_t fetchers,
-                      size_t bufferedBatches,
+                      size_t minBufferedBatches,
+                      size_t maxBufferedBatches,
                       uint32_t chunksPerTake,
                       int64_t waitMs,
                       bool removeChunks,
@@ -314,7 +317,8 @@ PYBIND11_MODULE(_stoke, m) {
                     .epoch = Epoch{std::move(job), incarnation},
                     .releasePrevious = releasePrevious,
                     .fetchers = fetchers,
-                    .bufferedBatches = bufferedBatches,
+                    .minBufferedBatches = minBufferedBatches,
+                    .maxBufferedBatches = maxBufferedBatches,
                     .chunksPerTake = chunksPerTake,
                     .wait = std::chrono::milliseconds(waitMs),
                     .removeChunks = removeChunks,
@@ -325,7 +329,8 @@ PYBIND11_MODULE(_stoke, m) {
           py::arg("job"),
           py::arg("incarnation") = 0,
           py::arg("fetchers") = 2,
-          py::arg("buffered_batches") = 64,
+          py::arg("min_buffered_batches") = 64,
+          py::arg("max_buffered_batches") = 0,
           py::arg("chunks_per_take") = 1,
           py::arg("wait_ms") = 100,
           py::arg("remove_chunks") = true,

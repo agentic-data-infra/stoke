@@ -93,7 +93,10 @@ dependencies, for producers outside stoke.
 ## Dataloader
 
 Each rank runs a loader ([stoke/loader/Loader.h](stoke/loader/Loader.h)).
-Its fetcher threads keep a buffer of batches filled: a fetcher takes a
+Its fetcher threads keep a buffer of batches filled: while fewer than
+`minBufferedBatches` (64) are buffered, and, with `maxBufferedBatches`,
+while the buffer plus the batches expected from the takes in flight stay
+under that maximum (it may be passed by part of a chunk), a fetcher takes a
 chunk from a random shard, tries a second one if that was empty, and then
 waits at a third (100 ms by default); it reads the whole chunk from Kiln,
 splits it into batches, removes the chunk from Kiln and acks it. `next()`

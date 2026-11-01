@@ -32,7 +32,12 @@ struct LoaderOptions {
   // Threads that take and read chunks.
   uint32_t fetchers{2};
   // Fetchers take chunks while fewer batches than this are buffered.
-  size_t bufferedBatches{64};
+  size_t minBufferedBatches{64};
+  // If not 0, a fetcher takes chunks only while the buffered batches plus
+  // those expected from the takes in flight (at the average batches per
+  // chunk so far) stay under this. A chunk is read whole, so the buffer may
+  // pass it by part of a take. At least minBufferedBatches.
+  size_t maxBufferedBatches{0};
   uint32_t chunksPerTake{1};
   // How long a take waits at a shard once two others came back empty.
   std::chrono::milliseconds wait{100};
@@ -62,6 +67,9 @@ struct LoaderStats {
   uint64_t lostChunks{0};
   // Time next() spent waiting for a batch: the trainer starving.
   std::chrono::nanoseconds waitTime{0};
+  // Batches buffered now, and the most ever.
+  uint64_t buffered{0};
+  uint64_t peakBuffered{0};
 };
 
 // The consumer side of a stream, one per rank: fetcher threads take chunks
@@ -103,6 +111,10 @@ class Loader {
   // A random shard that has not ended the stream, or nullopt if all have.
   std::optional<uint32_t> pickShard(std::mt19937_64& random);
 
+  // Whether a fetcher may take more chunks (minBufferedBatches,
+  // maxBufferedBatches). Under mutex_.
+  bool wantsChunks() const;
+
   const std::shared_ptr<StreamClient> stream_;
   const std::shared_ptr<kiln::client::Client> kiln_;
   const LoaderOptions options_;
@@ -114,6 +126,10 @@ class Loader {
   std::vector<bool> ended_;
   uint32_t endedShards_{0};
   uint32_t runningFetchers_{0};
+  // Takes and reads in progress.
+  uint32_t fetching_{0};
+  // Batches in the chunks read so far.
+  uint64_t batchesRead_{0};
   bool stopping_{false};
   LoaderStats stats_;
   std::vector<std::thread> fetchers_;

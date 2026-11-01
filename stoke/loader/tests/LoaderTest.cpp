@@ -73,7 +73,7 @@ class LoaderTest : public testing::Test {
         LoaderOptions{
             .epoch = std::move(epoch),
             .fetchers = fetchers,
-            .bufferedBatches = 8,
+            .minBufferedBatches = 8,
             .wait = milliseconds(50),
             .seed = 1});
   }
@@ -128,6 +128,48 @@ TEST_F(LoaderTest, readsEveryBatchOnceThenEnds) {
   }
   EXPECT_EQ(total.acked, kChunks);
   EXPECT_EQ(total.leased, 0);
+}
+
+// With a maximum, the buffer stays under it but for part of a chunk, even
+// with many fetchers and a slow trainer.
+TEST_F(LoaderTest, keepsTheBufferUnderTheMaximum) {
+  constexpr int kChunks = 30;
+  constexpr int kBatchesPerChunk = 4;
+  constexpr size_t kMax = 12;
+  for (int c = 0; c < kChunks; ++c) {
+    produce(c * kBatchesPerChunk, kBatchesPerChunk);
+  }
+  blockingWait(registry_->co_seal("s"));
+  Loader loader(
+      stream_,
+      kiln_,
+      LoaderOptions{
+          .epoch = {"rank0", 0},
+          .fetchers = 4,
+          .minBufferedBatches = 8,
+          .maxBufferedBatches = kMax,
+          .wait = milliseconds(50),
+          .seed = 1});
+  int batches = 0;
+  while (loader.next()) {
+    ++batches;
+    std::this_thread::sleep_for(milliseconds(1));
+  }
+  EXPECT_EQ(batches, kChunks * kBatchesPerChunk);
+  EXPECT_LT(loader.stats().peakBuffered, kMax + kBatchesPerChunk);
+  EXPECT_EQ(loader.stats().buffered, 0);
+}
+
+TEST_F(LoaderTest, rejectsAMaximumUnderTheMinimum) {
+  EXPECT_THROW(
+      Loader(
+          stream_,
+          kiln_,
+          LoaderOptions{
+              .epoch = {"rank0", 0},
+              .minBufferedBatches = 8,
+              .maxBufferedBatches = 4}),
+      kiln::Error);
 }
 
 TEST_F(LoaderTest, batchesOutliveTheLoader) {

@@ -25,11 +25,17 @@ Loader::Loader(
       kiln_{std::move(kiln)},
       options_{std::move(options)},
       ended_(stream_->numShards(), false) {
-  if (options_.fetchers == 0 || options_.bufferedBatches == 0 ||
+  if (options_.fetchers == 0 || options_.minBufferedBatches == 0 ||
       options_.chunksPerTake == 0) {
     throw kiln::Error(
         kiln::ErrorCode::kInvalidArgument,
         "a loader needs fetchers, buffered batches and chunks per take");
+  }
+  if (options_.maxBufferedBatches != 0 &&
+      options_.maxBufferedBatches < options_.minBufferedBatches) {
+    throw kiln::Error(
+        kiln::ErrorCode::kInvalidArgument,
+        "maxBufferedBatches must be at least minBufferedBatches");
   }
   if (options_.releasePrevious && options_.epoch.incarnation > 0) {
     const Epoch previous{options_.epoch.job, options_.epoch.incarnation - 1};
@@ -91,7 +97,30 @@ std::optional<Batch> Loader::next() {
 
 LoaderStats Loader::stats() const {
   std::lock_guard lock(mutex_);
-  return stats_;
+  auto result = stats_;
+  result.buffered = batches_.size();
+  return result;
+}
+
+bool Loader::wantsChunks() const {
+  if (batches_.size() >= options_.minBufferedBatches) {
+    return false;
+  }
+  if (options_.maxBufferedBatches == 0) {
+    return true;
+  }
+  // Before the first chunk the batches per chunk are unknown: one take at a
+  // time.
+  if (stats_.chunks == 0) {
+    return fetching_ == 0;
+  }
+  // The batches the takes in flight will likely add.
+  const double perChunk =
+      static_cast<double>(batchesRead_) / static_cast<double>(stats_.chunks);
+  const double expected =
+      static_cast<double>(fetching_ * options_.chunksPerTake) * perChunk;
+  return static_cast<double>(batches_.size()) + expected <
+      static_cast<double>(options_.maxBufferedBatches);
 }
 
 std::optional<uint32_t> Loader::pickShard(std::mt19937_64& random) {
@@ -117,21 +146,30 @@ void Loader::fetchLoop(uint32_t index) {
     {
       std::unique_lock lock(mutex_);
       spaceFree_.wait(lock, [this] {
-        return stopping_ || endedShards_ == ended_.size() ||
-            batches_.size() < options_.bufferedBatches;
+        return stopping_ || endedShards_ == ended_.size() || wantsChunks();
       });
       if (stopping_ || endedShards_ == ended_.size()) {
         break;
       }
+      ++fetching_;
     }
+    bool failed = false;
     try {
       folly::coro::blockingWait(co_fetch(random));
     } catch (const std::exception& e) {
       LOG(WARNING) << "stoke loader: " << e.what();
-      {
-        std::lock_guard lock(mutex_);
+      failed = true;
+    }
+    {
+      std::lock_guard lock(mutex_);
+      --fetching_;
+      if (failed) {
         ++stats_.errors;
       }
+    }
+    // Fewer takes in flight may let another fetcher go.
+    spaceFree_.notify_all();
+    if (failed) {
       std::this_thread::sleep_for(kRetryDelay);
     }
   }
@@ -209,9 +247,12 @@ folly::coro::Task<void> Loader::co_fetch(std::mt19937_64& random) {
         std::lock_guard lock(mutex_);
         ++stats_.chunks;
         stats_.bytes += info.size;
+        batchesRead_ += views.size();
         for (auto& view : views) {
           batches_.push_back(Batch{std::move(view), data});
         }
+        stats_.peakBuffered =
+            std::max<uint64_t>(stats_.peakBuffered, batches_.size());
       }
       batchesReady_.notify_all();
     } catch (const kiln::Error& e) {
