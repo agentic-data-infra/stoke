@@ -127,6 +127,7 @@ py::dict statsDict(const LoaderStats& stats) {
   result["lost_chunks"] = stats.lostChunks;
   result["buffered"] = stats.buffered;
   result["peak_buffered"] = stats.peakBuffered;
+  result["allocated_buffers"] = stats.allocatedBuffers;
   result["wait_seconds"] =
       std::chrono::duration<double>(stats.waitTime).count();
   return result;

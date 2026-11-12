@@ -160,6 +160,28 @@ TEST_F(LoaderTest, keepsTheBufferUnderTheMaximum) {
   EXPECT_EQ(loader.stats().buffered, 0);
 }
 
+// Chunks are read into the buffers of chunks whose batches were released,
+// so a trainer that drops each batch needs about as many buffers as chunks
+// are buffered, not one per chunk.
+TEST_F(LoaderTest, reusesTheBuffersOfReleasedChunks) {
+  constexpr int kChunks = 40;
+  constexpr int kBatchesPerChunk = 4;
+  for (int c = 0; c < kChunks; ++c) {
+    produce(c * kBatchesPerChunk, kBatchesPerChunk);
+  }
+  blockingWait(registry_->co_seal("s"));
+  auto loader = makeLoader({"rank0", 0});
+  std::set<int32_t> seen;
+  while (auto batch = loader->next()) {
+    seen.insert(
+        reinterpret_cast<const int32_t*>(batch->view.payload.data())[0]);
+  }
+  EXPECT_EQ(seen.size(), kChunks * kBatchesPerChunk);
+  const auto stats = loader->stats();
+  EXPECT_EQ(stats.chunks, kChunks);
+  EXPECT_LT(stats.allocatedBuffers, kChunks / 4);
+}
+
 TEST_F(LoaderTest, rejectsAMaximumUnderTheMinimum) {
   EXPECT_THROW(
       Loader(

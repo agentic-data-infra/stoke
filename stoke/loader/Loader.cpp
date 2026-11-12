@@ -1,5 +1,8 @@
 #include "stoke/loader/Loader.h"
 
+#include <algorithm>
+#include <utility>
+
 #include <folly/coro/BlockingWait.h>
 #include <glog/logging.h>
 
@@ -17,6 +20,61 @@ constexpr auto kRetryDelay = std::chrono::milliseconds(100);
 
 } // namespace
 
+// The buffers of chunks whose batches were all released, for later reads.
+// Only buffers of the largest size asked for so far are kept, so that they
+// all end up fitting the stream's largest chunks. Thread safe; a buffer
+// released after the pool is gone is freed.
+class Loader::ChunkBuffers
+    : public std::enable_shared_from_this<ChunkBuffers> {
+ public:
+  explicit ChunkBuffers(std::shared_ptr<kiln::client::Client> kiln)
+      : kiln_{std::move(kiln)} {}
+
+  // An empty buffer for 'size' bytes, and whether it was allocated. Kept
+  // buffers smaller than a new largest size are freed.
+  std::pair<kiln::Buffer, bool> take(size_t size) {
+    {
+      std::lock_guard lock(mutex_);
+      capacity_ = std::max(capacity_, size);
+      while (!free_.empty()) {
+        auto buffer = std::move(free_.back());
+        free_.pop_back();
+        if (buffer.capacity() >= size) {
+          return {std::move(buffer), false};
+        }
+      }
+    }
+    return {kiln_->allocateBuffer(size), true};
+  }
+
+  // 'buffer' as shared memory that comes back here once released.
+  std::shared_ptr<const kiln::Buffer> share(kiln::Buffer buffer) {
+    return std::shared_ptr<kiln::Buffer>(
+        new kiln::Buffer(std::move(buffer)),
+        [pool = weak_from_this()](kiln::Buffer* released) {
+          std::unique_ptr<kiln::Buffer> owned(released);
+          if (auto self = pool.lock()) {
+            self->give(std::move(*owned));
+          }
+        });
+  }
+
+ private:
+  void give(kiln::Buffer buffer) {
+    std::lock_guard lock(mutex_);
+    if (buffer.capacity() >= capacity_) {
+      buffer.setSize(0);
+      free_.push_back(std::move(buffer));
+    }
+  }
+
+  const std::shared_ptr<kiln::client::Client> kiln_;
+  std::mutex mutex_;
+  // The largest size asked for.
+  size_t capacity_{0};
+  std::vector<kiln::Buffer> free_;
+};
+
 Loader::Loader(
     std::shared_ptr<StreamClient> stream,
     std::shared_ptr<kiln::client::Client> kiln,
@@ -24,6 +82,7 @@ Loader::Loader(
     : stream_{std::move(stream)},
       kiln_{std::move(kiln)},
       options_{std::move(options)},
+      buffers_{std::make_shared<ChunkBuffers>(kiln_)},
       ended_(stream_->numShards(), false) {
   if (options_.fetchers == 0 || options_.minBufferedBatches == 0 ||
       options_.chunksPerTake == 0) {
@@ -220,7 +279,11 @@ folly::coro::Task<void> Loader::co_fetch(std::mt19937_64& random) {
       std::shared_ptr<const kiln::Buffer> data;
       std::vector<format::BatchView> views;
       if (info.size > 0) {
-        auto buffer = kiln_->allocateBuffer(info.size);
+        auto [buffer, allocated] = buffers_->take(info.size);
+        if (allocated) {
+          std::lock_guard lock(mutex_);
+          ++stats_.allocatedBuffers;
+        }
         buffer =
             co_await kiln_->co_read(chunk, 0, info.size, std::move(buffer));
         // A read may return fewer bytes than asked for.
@@ -237,7 +300,7 @@ folly::coro::Task<void> Loader::co_fetch(std::mt19937_64& random) {
           done += rest.size();
         }
         buffer.setSize(info.size);
-        data = std::make_shared<const kiln::Buffer>(std::move(buffer));
+        data = buffers_->share(std::move(buffer));
         views = format::parseChunk({data->data(), data->size()});
       }
       if (options_.removeChunks) {
