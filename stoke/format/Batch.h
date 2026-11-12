@@ -74,12 +74,28 @@ struct BatchView {
   std::span<const uint8_t> payload;
 };
 
+// The bytes a batch with 'header' takes: header, payload and padding.
+size_t encodedSize(const BatchHeader& header);
+
+// Writes the header and padding of a batch with 'header' into 'batch', which
+// has encodedSize(header) bytes, and returns its payload for the caller to
+// fill: for producers that build batches in memory of their own. Throws
+// std::invalid_argument if the shape has more than kMaxDims dims or 'batch'
+// has another size.
+std::span<uint8_t> encodeHeader(
+    const BatchHeader& header,
+    std::span<uint8_t> batch);
+
 // The batch's bytes: header, 'payload' and padding. Throws
 // std::invalid_argument if the shape has more than kMaxDims dims or does
 // not match the payload's length.
 std::string encodeBatch(
     const BatchHeader& header,
     std::span<const uint8_t> payload);
+
+// The length that starts the frame of a batch of 'batchSize' bytes, for
+// producers that write frames into memory of their own.
+std::array<uint8_t, 8> frameLength(uint64_t batchSize);
 
 // Appends a frame of 'batch' to 'chunk'.
 void appendFrame(std::string& chunk, std::string_view batch);

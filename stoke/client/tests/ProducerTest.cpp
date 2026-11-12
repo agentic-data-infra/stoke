@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cstring>
 #include <thread>
 
 #include <folly/coro/BlockingWait.h>
@@ -110,6 +111,35 @@ TEST_F(ProducerTest, waitsAtTheBudgetUntilTheOldestIsConsumed) {
   EXPECT_EQ(producer->unconsumed(), 2);
   EXPECT_EQ(unacked(), 2);
   EXPECT_GE(producer->waited(), milliseconds(150));
+}
+
+// A chunk the caller writes itself (co_create, then co_put of its id)
+// lands in the stream's bucket and counts against the budget.
+TEST_F(ProducerTest, putsAChunkTheCallerWrote) {
+  auto producer = makeProducer(1);
+  auto writer = blockingWait(producer->co_create());
+  auto buffer = kiln_->allocateBuffer(5);
+  std::memcpy(buffer.data(), "chunk", 5);
+  buffer.setSize(5);
+  blockingWait(writer->co_append(std::move(buffer)));
+  auto id = blockingWait(writer->co_commit());
+  blockingWait(producer->co_put(id));
+  EXPECT_EQ(producer->unconsumed(), 1);
+  EXPECT_EQ(unacked(), 1);
+  auto read = blockingWait(kiln_->co_read(id, 0, 5, kiln_->allocateBuffer(5)));
+  EXPECT_EQ(
+      std::string(reinterpret_cast<const char*>(read.data()), read.size()),
+      "chunk");
+
+  std::atomic<bool> created{false};
+  std::thread next([&] {
+    blockingWait(producer->co_create());
+    created = true;
+  });
+  std::this_thread::sleep_for(milliseconds(200));
+  EXPECT_FALSE(created);
+  consume(id);
+  next.join();
 }
 
 TEST_F(ProducerTest, drainWaitsUntilEveryChunkIsConsumed) {

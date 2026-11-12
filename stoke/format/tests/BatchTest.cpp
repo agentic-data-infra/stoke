@@ -111,6 +111,37 @@ TEST(BatchTest, rejectsMalformedInput) {
   EXPECT_THROW(parseChunk(bytesOf(chunk).first(5)), std::invalid_argument);
 }
 
+TEST(BatchTest, encodeHeaderBuildsTheBatchInPlace) {
+  const BatchHeader header{.dtype = DType::kInt32, .shape = {3}};
+  const std::vector<int32_t> values{1, 2, 3};
+  std::string batch(encodedSize(header), 'x');
+  auto payload = encodeHeader(
+      header, {reinterpret_cast<uint8_t*>(batch.data()), batch.size()});
+  ASSERT_EQ(payload.size(), sizeof(int32_t) * values.size());
+  std::memcpy(payload.data(), values.data(), payload.size());
+  EXPECT_EQ(
+      batch,
+      encodeBatch(
+          header,
+          {reinterpret_cast<const uint8_t*>(values.data()), payload.size()}));
+  std::string tooShort(encodedSize(header) - 8, '\0');
+  EXPECT_THROW(
+      encodeHeader(
+          header,
+          {reinterpret_cast<uint8_t*>(tooShort.data()), tooShort.size()}),
+      std::invalid_argument);
+}
+
+TEST(BatchTest, frameLengthStartsTheFrame) {
+  std::string chunk;
+  appendFrame(chunk, "batch");
+  const auto length = frameLength(5);
+  EXPECT_EQ(
+      chunk,
+      std::string(reinterpret_cast<const char*>(length.data()), length.size()) +
+          "batch");
+}
+
 TEST(BatchTest, namesDTypes) {
   EXPECT_EQ(toString(DType::kBFloat16), "bfloat16");
   EXPECT_EQ(parseDType("int64"), DType::kInt64);

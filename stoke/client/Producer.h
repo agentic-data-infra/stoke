@@ -12,8 +12,9 @@
 #include "stoke/client/StreamClient.h"
 
 namespace kiln::client {
+class ChunkWriter;
 class Client;
-}
+} // namespace kiln::client
 
 namespace stoke {
 
@@ -42,6 +43,15 @@ class Producer {
   // Writes 'chunk' (framed batches, see stoke/format/Batch.h) as one Kiln
   // chunk and puts it, once within the budget. Returns its id.
   folly::coro::Task<kiln::ChunkId> co_put(std::string_view chunk);
+
+  // The same in two steps, for callers that write the chunk themselves
+  // (e.g. from pooled buffers, without a copy of the whole chunk): co_create
+  // waits until the producer is within the budget and starts a chunk in the
+  // stream's bucket; the caller appends framed batches and commits it, then
+  // puts it with co_put.
+  folly::coro::Task<std::unique_ptr<kiln::client::ChunkWriter>> co_create(
+      uint64_t sizeHint = 0);
+  folly::coro::Task<void> co_put(const kiln::ChunkId& chunk);
 
   // Waits until every chunk put was consumed; returns at once without a
   // budget.
