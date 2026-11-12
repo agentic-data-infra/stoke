@@ -70,6 +70,9 @@ struct LoaderStats {
   // Batches buffered now, and the most ever.
   uint64_t buffered{0};
   uint64_t peakBuffered{0};
+  // Chunk buffers allocated; the other chunks were read into buffers that
+  // released batches gave back.
+  uint64_t allocatedBuffers{0};
 };
 
 // The consumer side of a stream, one per rank: fetcher threads take chunks
@@ -78,7 +81,8 @@ struct LoaderStats {
 // shards without waiting, then waits at a third, so that idle consumers
 // park at shards instead of polling them. Chunks are acked once read:
 // those read but not consumed when the trainer stops are lost
-// (at-most-once).
+// (at-most-once). A chunk's buffer is reused for a later chunk once all
+// its batches are released, so that reads do not fault in fresh memory.
 class Loader {
  public:
   Loader(
@@ -104,6 +108,8 @@ class Loader {
   LoaderStats stats() const;
 
  private:
+  class ChunkBuffers;
+
   void fetchLoop(uint32_t index);
 
   folly::coro::Task<void> co_fetch(std::mt19937_64& random);
@@ -118,6 +124,7 @@ class Loader {
   const std::shared_ptr<StreamClient> stream_;
   const std::shared_ptr<kiln::client::Client> kiln_;
   const LoaderOptions options_;
+  const std::shared_ptr<ChunkBuffers> buffers_;
 
   mutable std::mutex mutex_;
   std::condition_variable batchesReady_;
