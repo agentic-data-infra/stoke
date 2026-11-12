@@ -96,21 +96,24 @@ uint64_t BatchHeader::elements() const {
   return count;
 }
 
-std::string encodeBatch(
+size_t encodedSize(const BatchHeader& header) {
+  return padded(kHeaderSize + header.payloadBytes());
+}
+
+std::span<uint8_t> encodeHeader(
     const BatchHeader& header,
-    std::span<const uint8_t> payload) {
+    std::span<uint8_t> batch) {
   if (header.shape.size() > kMaxDims) {
     throw std::invalid_argument(
         "a batch has at most " + std::to_string(kMaxDims) + " dims");
   }
-  if (header.payloadBytes() != payload.size()) {
+  if (batch.size() != encodedSize(header)) {
     throw std::invalid_argument(
-        "payload of " + std::to_string(payload.size()) +
-        " bytes does not match the shape's " +
-        std::to_string(header.payloadBytes()));
+        "a batch of this header takes " + std::to_string(encodedSize(header)) +
+        " bytes, not " + std::to_string(batch.size()));
   }
-  std::string batch(padded(kHeaderSize + payload.size()), '\0');
-  auto* bytes = reinterpret_cast<uint8_t*>(batch.data());
+  auto* bytes = batch.data();
+  std::memset(bytes, 0, kHeaderSize);
   std::memcpy(bytes, kMagic, sizeof(kMagic));
   bytes[4] = kVersion;
   bytes[kDTypeOffset] = static_cast<uint8_t>(header.dtype);
@@ -118,9 +121,30 @@ std::string encodeBatch(
   for (size_t i = 0; i < header.shape.size(); ++i) {
     store64(bytes + kShapeOffset + 8 * i, header.shape[i]);
   }
-  store64(bytes + kPayloadLengthOffset, payload.size());
+  const auto payloadBytes = header.payloadBytes();
+  store64(bytes + kPayloadLengthOffset, payloadBytes);
+  std::memset(
+      bytes + kHeaderSize + payloadBytes,
+      0,
+      batch.size() - kHeaderSize - payloadBytes);
+  return batch.subspan(kHeaderSize, payloadBytes);
+}
+
+std::string encodeBatch(
+    const BatchHeader& header,
+    std::span<const uint8_t> payload) {
+  if (header.shape.size() <= kMaxDims &&
+      header.payloadBytes() != payload.size()) {
+    throw std::invalid_argument(
+        "payload of " + std::to_string(payload.size()) +
+        " bytes does not match the shape's " +
+        std::to_string(header.payloadBytes()));
+  }
+  std::string batch(encodedSize(header), '\0');
+  auto out = encodeHeader(
+      header, {reinterpret_cast<uint8_t*>(batch.data()), batch.size()});
   if (!payload.empty()) {
-    std::memcpy(bytes + kHeaderSize, payload.data(), payload.size());
+    std::memcpy(out.data(), payload.data(), payload.size());
   }
   return batch;
 }
