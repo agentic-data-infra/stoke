@@ -61,9 +61,7 @@ folly::coro::Task<void> Producer::co_awaitUnconsumedBelow(size_t limit) {
 }
 
 folly::coro::Task<kiln::ChunkId> Producer::co_put(std::string_view chunk) {
-  co_await co_awaitUnconsumedBelow(budget_);
-  auto writer = co_await kiln_->co_create(
-      stream_->info().bucket, placement_, chunk.size());
+  auto writer = co_await co_create(chunk.size());
   if (!chunk.empty()) {
     auto buffer = kiln_->allocateBuffer(chunk.size());
     std::memcpy(buffer.data(), chunk.data(), chunk.size());
@@ -71,12 +69,23 @@ folly::coro::Task<kiln::ChunkId> Producer::co_put(std::string_view chunk) {
     co_await writer->co_append(std::move(buffer));
   }
   auto id = co_await writer->co_commit();
-  co_await stream_->co_put(id);
+  co_await co_put(id);
+  co_return id;
+}
+
+folly::coro::Task<std::unique_ptr<kiln::client::ChunkWriter>>
+Producer::co_create(uint64_t sizeHint) {
+  co_await co_awaitUnconsumedBelow(budget_);
+  co_return co_await kiln_->co_create(
+      stream_->info().bucket, placement_, sizeHint);
+}
+
+folly::coro::Task<void> Producer::co_put(const kiln::ChunkId& chunk) {
+  co_await stream_->co_put(chunk);
   if (budget_ > 0) {
     std::lock_guard lock(mutex_);
-    unconsumed_.push_back(id);
+    unconsumed_.push_back(chunk);
   }
-  co_return id;
 }
 
 folly::coro::Task<void> Producer::co_drain() {

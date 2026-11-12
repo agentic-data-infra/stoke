@@ -125,10 +125,16 @@ std::string encodeBatch(
   return batch;
 }
 
+std::array<uint8_t, 8> frameLength(uint64_t batchSize) {
+  static_assert(kFrameLengthSize == 8);
+  std::array<uint8_t, 8> length;
+  store64(length.data(), batchSize);
+  return length;
+}
+
 void appendFrame(std::string& chunk, std::string_view batch) {
-  uint8_t length[kFrameLengthSize];
-  store64(length, batch.size());
-  chunk.append(reinterpret_cast<const char*>(length), sizeof(length));
+  const auto length = frameLength(batch.size());
+  chunk.append(reinterpret_cast<const char*>(length.data()), length.size());
   chunk.append(batch);
 }
 

@@ -111,6 +111,16 @@ TEST(BatchTest, rejectsMalformedInput) {
   EXPECT_THROW(parseChunk(bytesOf(chunk).first(5)), std::invalid_argument);
 }
 
+TEST(BatchTest, frameLengthStartsTheFrame) {
+  std::string chunk;
+  appendFrame(chunk, "batch");
+  const auto length = frameLength(5);
+  EXPECT_EQ(
+      chunk,
+      std::string(reinterpret_cast<const char*>(length.data()), length.size()) +
+          "batch");
+}
+
 TEST(BatchTest, namesDTypes) {
   EXPECT_EQ(toString(DType::kBFloat16), "bfloat16");
   EXPECT_EQ(parseDType("int64"), DType::kInt64);

@@ -81,6 +81,10 @@ std::string encodeBatch(
     const BatchHeader& header,
     std::span<const uint8_t> payload);
 
+// The length that starts the frame of a batch of 'batchSize' bytes, for
+// producers that write frames into memory of their own.
+std::array<uint8_t, 8> frameLength(uint64_t batchSize);
+
 // Appends a frame of 'batch' to 'chunk'.
 void appendFrame(std::string& chunk, std::string_view batch);
 
