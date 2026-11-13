@@ -6,11 +6,12 @@ The stream is sealed when the job commits.
 
     python feed_exp2.py DATA_DIR STREAM --metadata HOST:PORT [--master local[N]]
 
-Needs Ember's Python module built with stoke (-c ember.stoke=true) on
+More Session configuration comes from EMBER_CONF="k=v k=v ...". Needs Ember's Python module built with stoke (-c ember.stoke=true) on
 PYTHONPATH.
 """
 
 import argparse
+import os
 import time
 
 from ember import Session
@@ -27,13 +28,15 @@ def main():
     parser.add_argument("--chunk_mb", type=int, default=16, help="bytes of batches per chunk")
     args = parser.parse_args()
 
-    ember = (
+    builder = (
         Session.builder.appName("dlbench-feed-exp2")
         .master(args.master)
         .config("ember.kiln.metadata", args.metadata)
         .config("ember.stoke.chunk_bytes", str(args.chunk_mb << 20))
-        .getOrCreate()
     )
+    for kv in os.environ.get("EMBER_CONF", "").split():
+        builder = builder.config(*kv.split("=", 1))
+    ember = builder.getOrCreate()
     start = time.time()
     docs = (
         ember.read.parquet(args.data_dir)
