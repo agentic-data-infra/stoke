@@ -122,7 +122,7 @@ class Stoke:
         import _stoke
 
         self.stoke = _stoke
-        self.stream = "exp1"
+        self.stream = "bench"
         _stoke.create_stream(
             self.metadata, self.stream, shards, stop_fraction=1.0, task_budget=args.task_budget
         )
