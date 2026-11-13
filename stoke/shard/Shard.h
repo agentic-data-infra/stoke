@@ -28,7 +28,11 @@ struct ShardOptions {
 };
 
 // One shard of the stoke queue: for each stream it serves, the chunk ids
-// put here, queued in DRAM until consumers take them. A chunk is queued
+// put here, queued in DRAM until consumers take them, in one queue per
+// host the chunks are stored on: a take gets its own host's chunks first,
+// then (unless it asks for its host's only) the longest other queue's, and
+// a chunk put goes to a parked take of its host first, so that consumers
+// read locally where they can and no host's chunks are left behind. A chunk is queued
 // once (duplicates are dropped), leased to the epoch that took it until
 // acked, and goes back to the queue if released or its lease times out.
 // Takes on an empty queue park until a chunk comes or their wait is over;
@@ -43,14 +47,18 @@ class Shard : public rpc::ShardRpc {
 
   ~Shard() override;
 
-  folly::coro::Task<bool> co_put(std::string stream, kiln::ChunkId chunk)
-      override;
+  folly::coro::Task<bool> co_put(
+      std::string stream,
+      kiln::ChunkId chunk,
+      std::string host) override;
 
   folly::coro::Task<TakeResult> co_take(
       std::string stream,
       Epoch epoch,
       uint32_t max,
-      std::chrono::milliseconds wait) override;
+      std::chrono::milliseconds wait,
+      std::string host,
+      bool hostOnly) override;
 
   folly::coro::Task<void> co_ack(
       std::string stream,

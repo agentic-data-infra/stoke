@@ -13,7 +13,8 @@ TEST(StreamTest, encodesAndDecodes) {
       .shards = {"host-a:7480", "host-b:7480"},
       .state = StreamState::kSealed,
       .stopFraction = 0.9,
-      .taskBudget = 4};
+      .taskBudget = 4,
+      .localWrites = true};
   EXPECT_EQ(StreamInfo::decode(info.encode()), info);
   EXPECT_EQ(StreamInfo::decode(StreamInfo{}.encode()), StreamInfo{});
   // Entries written before the budget existed have none.
@@ -22,6 +23,13 @@ TEST(StreamTest, encodesAndDecodes) {
           R"({"bucket":1,"shards":["a:1"],"state":"open","stopFraction":1})")
           .taskBudget,
       0);
+}
+
+TEST(StreamTest, oldEntriesHaveNoLocalWrites) {
+  EXPECT_FALSE(
+      StreamInfo::decode(
+          R"({"bucket":1,"shards":["a:1"],"state":"open","stopFraction":1})")
+          .localWrites);
 }
 
 TEST(StreamTest, rejectsMalformedInfo) {

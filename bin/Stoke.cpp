@@ -1,7 +1,7 @@
 // stoke: manages streams.
 //
 //   stoke [--metadata=URLS] create STREAM --shards=HOST:PORT,...
-//         [--stop_fraction=F] [--task_budget=N]
+//         [--stop_fraction=F] [--task_budget=N] [--local_writes]
 //   stoke [--metadata=URLS] seal STREAM
 //   stoke [--metadata=URLS] stats STREAM
 //   stoke [--metadata=URLS] ls
@@ -11,7 +11,8 @@
 // a new Kiln bucket for its chunks. seal tells the shards that no more
 // chunks come, so that consumers see the end once they took --stop_fraction
 // of them; with --task_budget, each producer waits once it has N chunks
-// put and not yet consumed. stats prints each shard's queue: the backlog (depth), the
+// put and not yet consumed; with --local_writes, producers write chunks to
+// their own host's Kiln server first. stats prints each shard's queue: the backlog (depth), the
 // consumers waiting, and chunks put, taken and acked. rm removes the stream
 // and its chunks.
 //
@@ -44,6 +45,10 @@ DEFINE_uint32(
     0,
     "create: the chunks each producer (e.g. each Ember task) may have put "
     "and not yet seen consumed before it waits; 0 for no limit.");
+DEFINE_bool(
+    local_writes,
+    false,
+    "create: producers write chunks to their own host's Kiln server first.");
 
 namespace stoke {
 namespace {
@@ -105,7 +110,11 @@ folly::coro::Task<int> co_main(std::vector<std::string> args) {
     folly::split(',', FLAGS_shards, shards, true);
     auto info =
         co_await registry->co_create(
-            args[1], shards, FLAGS_stop_fraction, FLAGS_task_budget);
+            args[1],
+            shards,
+            FLAGS_stop_fraction,
+            FLAGS_task_budget,
+            FLAGS_local_writes);
     fmt::print("{}\n", info.encode());
   } else if (command == "seal" && args.size() == 2) {
     co_await registry->co_seal(args[1]);

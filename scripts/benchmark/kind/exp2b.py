@@ -118,6 +118,7 @@ def main():
     parser.add_argument("--chunk_mb", type=int, default=16)
     parser.add_argument("--timeout", type=float, default=300, help="seconds, on top of the run's steps")
     parser.add_argument("--log_dir", help="keep the nodes' logs here")
+    parser.add_argument("--local_writes", action="store_true", help="stoke: the stream's producers write locally")
     args = parser.parse_args()
 
     nodes = worker_nodes()
@@ -155,7 +156,7 @@ def main():
             f"--dop={args.dop}", f"--step_ms={args.step_ms}", f"--steps={args.steps}",
             f"--cpus={','.join(map(str, budget))}", f"--trainer_cpu={trainer}", f"--kiln_mb={kiln_mb}",
             f"--fetchers={args.fetchers}", f"--task_budget={args.task_budget}", f"--chunk_mb={args.chunk_mb}",
-        ]
+        ] + (["--local_writes"] if args.local_writes else [])
         pods.append(f"dlbench-{run_id}-{i}")
         kubectl("apply", "-f", "-", input=json.dumps(pod(pods[-1], name, args.image, args.memory, command)))
 
@@ -225,9 +226,16 @@ def main():
         "node_cpu_s": [round(o["cpu_user_s"] + o["cpu_sys_s"], 1) for o in nodes_out],
         "per_rank": per_rank,
     }
+    result["net_gib"] = round(sum(o["net_tx_bytes"] for o in nodes_out) / 2**30, 3)
     if args.loader == "stoke":
         result["kiln_gib"] = kiln_mb * n / 1024
         result["fetchers"] = args.fetchers
+        result["local_writes"] = args.local_writes
+        # Chunks read, by the node Kiln stored them on, and by each node's loader.
+        by_host = [o.get("loader", {}).get("chunks_by_host", {}) for o in nodes_out]
+        hosts = sorted({h for b in by_host for h in b})
+        result["chunks_by_host"] = {h: sum(b.get(h, 0) for b in by_host) for h in hosts}
+        result["node_chunks_by_host"] = by_host
     line = json.dumps(result)
     print(line)
     if args.out:

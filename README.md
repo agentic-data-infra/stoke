@@ -37,7 +37,9 @@ JSON: the Kiln bucket of its chunks, its shards' endpoints, its state
 (`open` or `sealed`) and the fraction of chunks after which shards end a
 sealed stream (`stopFraction`, so that ranks stop together), and the
 chunks each producer may have put and not yet seen consumed (`taskBudget`,
-`stoke create --task_budget`; 0 for no limit). See
+`stoke create --task_budget`; 0 for no limit), and whether producers write
+chunks to their own host's Kiln server first (`localWrites`,
+`stoke create --local_writes`; see Locality). See
 [stoke/common/Stream.h](stoke/common/Stream.h).
 
 ## Shards
@@ -46,11 +48,14 @@ A shard server (`stoke_shard`) keeps, for each stream that lists it, the
 chunk ids put there, in DRAM ([stoke/shard/Shard.h](stoke/shard/Shard.h);
 the API is [stoke/rpc/ShardRpc.h](stoke/rpc/ShardRpc.h), over fbthrift):
 
-- `co_put(stream, chunk)` queues a chunk, or hands it straight to a waiting
-  take; a chunk the shard already has is dropped.
-- `co_take(stream, epoch, max, wait)` returns up to `max` chunks, leased to
-  the consumer's epoch (job, incarnation). On an empty queue it parks for
-  up to `wait`, so consumers never poll.
+- `co_put(stream, chunk, host)` queues a chunk with the host it is stored
+  on, or hands it straight to a waiting take (one on that host first); a
+  chunk the shard already has is dropped.
+- `co_take(stream, epoch, max, wait, host, hostOnly)` returns up to `max`
+  chunks, leased to the consumer's epoch (job, incarnation): those stored
+  on the consumer's `host` first, then, unless `hostOnly`, those of the
+  host with the most queued. On an empty queue it parks for up to `wait`,
+  so consumers never poll.
 - `co_ack(stream, epoch, chunks)` ends leases; `co_release(stream, epoch)`
   queues all of an epoch's leased chunks again, for a restarted consumer.
   Leases not acked within `--lease_timeout_s` are queued again too.
@@ -81,6 +86,19 @@ buck2 run //bin:stoke -- seal demo
 buck2 run //bin:stoke -- rm demo
 ```
 
+
+### Locality
+
+Producers write each chunk sticky (Kiln's `Placement::sticky`): its blocks
+stay on one Kiln server, picked round robin, and the producer puts the
+chunk with that server's host. Shards queue chunks per host, and loaders
+take their own host's chunks first, so that most reads are local (Kiln's
+shared-memory path) without leaving any host's chunks behind: a loader
+with no local chunk takes another host's rather than wait. With a stream's
+`localWrites`, producers also ask for their own host's Kiln server first
+(`Placement::preferredHost`), so that writes stay local too; for
+deployments with a Kiln server on the producers' hosts (a full server, or
+a host without one, falls back to round robin).
 ## Batch format
 
 A chunk holds framed batches: `[u64 length][batch]...`, where a batch is a
@@ -96,9 +114,10 @@ Each rank runs a loader ([stoke/loader/Loader.h](stoke/loader/Loader.h)).
 Its fetcher threads keep a buffer of batches filled: while fewer than
 `minBufferedBatches` (64) are buffered, and, with `maxBufferedBatches`,
 while the buffer plus the batches expected from the takes in flight stay
-under that maximum (it may be passed by part of a chunk), a fetcher takes a
-chunk from a random shard, tries a second one if that was empty, and then
-waits at a third (100 ms by default); it reads the whole chunk from Kiln,
+under that maximum (it may be passed by part of a chunk), a fetcher asks
+every shard for chunks stored on its own host, then takes any chunk from a
+random shard, tries a second one if that was empty, and then waits at a
+third (100 ms by default); it reads the whole chunk from Kiln,
 splits it into batches, removes the chunk from Kiln and acks it. `next()`
 hands out batches that point into the chunk's memory; once every shard has
 ended the stream it returns the end. A restarted rank (a higher

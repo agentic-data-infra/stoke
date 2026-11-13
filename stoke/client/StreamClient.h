@@ -6,8 +6,13 @@
 
 #include <folly/coro/Task.h>
 
+#include "kiln/common/Types.h"
 #include "stoke/client/Registry.h"
 #include "stoke/rpc/ShardRpc.h"
+
+namespace kiln::client {
+class Client;
+} // namespace kiln::client
 
 namespace stoke {
 
@@ -46,7 +51,7 @@ class StreamClient {
   }
 
   // Queues 'chunk' at its shard (shardOf). Returns false for a duplicate.
-  folly::coro::Task<bool> co_put(kiln::ChunkId chunk);
+  folly::coro::Task<bool> co_put(kiln::ChunkId chunk, std::string host = {});
 
   // Whether 'chunk' was consumed, waiting up to 'wait' at its shard (see
   // ShardRpc::co_awaitConsumed).
@@ -62,5 +67,12 @@ class StreamClient {
   const StreamInfo info_;
   const std::vector<std::shared_ptr<rpc::ShardRpc>> shards_;
 };
+
+// The host a committed chunk is stored on, as shards queue it: that of its
+// first block (all of them unless its server filled up), in Kiln's terms
+// (kiln::localHostName() there); "" if not known.
+folly::coro::Task<std::string> co_chunkHost(
+    kiln::client::Client& kiln,
+    const kiln::ChunkInfo& chunk);
 
 } // namespace stoke

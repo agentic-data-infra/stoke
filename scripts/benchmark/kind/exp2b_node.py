@@ -60,6 +60,12 @@ def wait_for(path_or_port, run_dir, timeout=120):
     raise TimeoutError(f"waiting for {path_or_port}")
 
 
+def net_bytes():
+    """Bytes sent and received so far over the node's eth0."""
+    stats = "/sys/class/net/eth0/statistics"
+    return tuple(int(open(f"{stats}/{d}_bytes").read()) for d in ("tx", "rx"))
+
+
 def clear_shm():
     for d in glob.glob("/dev/shm/kiln-*"):  # Kiln's DRAM regions, of this node's earlier runs
         shutil.rmtree(d)
@@ -103,7 +109,7 @@ class Node:
                 wait_for((host, SHARD_PORT), a.run_dir)
             _stoke.create_stream(
                 self.metadata, STREAM, [f"{h}:{SHARD_PORT}" for h in a.hosts],
-                stop_fraction=1.0, task_budget=a.task_budget,
+                stop_fraction=1.0, task_budget=a.task_budget, local_writes=a.local_writes,
             )
             env = dict(
                 os.environ, PYTHONPATH=os.path.join(a.build, "python"),
@@ -151,12 +157,14 @@ def main():
     parser.add_argument("--fetchers", type=int, default=2)
     parser.add_argument("--task_budget", type=int, default=4)
     parser.add_argument("--chunk_mb", type=int, default=16)
+    parser.add_argument("--local_writes", action="store_true", help="stoke: the stream's producers write locally")
     args = parser.parse_args()
     args.hosts = args.hosts.split(",")
     # exp2.train's view: one rank of len(hosts), a trainer CPU per rank.
     args.ranks = len(args.hosts)
     args.trainer_cpus = {args.node: args.trainer_cpu}
     args.work = os.path.join(args.run_dir, "work")  # Zephon's, shared by the ranks
+    args.loader_stats = os.path.join(args.run_dir, f"node{args.node}.loader.json")
     os.makedirs(args.work, exist_ok=True)
 
     cgroup = bench.cgroup_dir()
@@ -175,6 +183,7 @@ def main():
         ctx = mp.get_context("spawn")
         results = ctx.Queue()
         user0, sys0 = bench.cpu_seconds(cgroup)
+        net0 = net_bytes()
         start = time.monotonic()
         trainer = ctx.Process(target=exp2.rank_main, args=(args, args.node, stream, results))
         trainer.start()
@@ -192,6 +201,7 @@ def main():
             wait_for(os.path.join(args.run_dir, f"node{i}.done"), args.run_dir, timeout=600)
         elapsed = time.monotonic() - start
         user1, sys1 = bench.cpu_seconds(cgroup)
+        net1 = net_bytes()
         done.set()
         trainer.join(timeout=30)
         result = {
@@ -202,7 +212,12 @@ def main():
             "cpu_sys_s": sys1 - sys0,
             "samples": samples,
             "memory_peak_gib": int(open(os.path.join(cgroup, "memory.peak")).read()) / 2**30,
+            # What the node sent to and got from the others (its network namespace's).
+            "net_tx_bytes": net1[0] - net0[0],
+            "net_rx_bytes": net1[1] - net0[1],
         }
+        if os.path.exists(args.loader_stats):
+            result["loader"] = json.load(open(args.loader_stats))
         with open(os.path.join(args.run_dir, f"node{args.node}.json.tmp"), "w") as f:
             json.dump(result, f)
         os.rename(f.name, f.name[: -len(".tmp")])

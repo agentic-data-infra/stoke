@@ -78,7 +78,7 @@ TEST_F(StreamClientTest, awaitsConsumptionAtTheChunksShard) {
   Epoch epoch{"consumer", 1};
   std::thread consumer([&] {
     std::this_thread::sleep_for(milliseconds(50));
-    auto taken = blockingWait(shard.co_take("s", epoch, 1, milliseconds(0)));
+    auto taken = blockingWait(shard.co_take("s", epoch, 1, milliseconds(0), "", false));
     blockingWait(shard.co_ack("s", epoch, taken.chunks));
   });
   EXPECT_TRUE(
@@ -111,7 +111,7 @@ TEST_F(StreamClientTest, consumersGetEveryChunkOnce) {
           continue;
         }
         auto result = blockingWait(
-            client->shard(shard).co_take("s", epoch, 8, milliseconds(50)));
+            client->shard(shard).co_take("s", epoch, 8, milliseconds(50), "", false));
         if (result.end) {
           ended[shard] = true;
           continue;

@@ -20,7 +20,8 @@ folly::coro::Task<StreamInfo> Registry::co_create(
     std::string name,
     std::vector<std::string> shards,
     double stopFraction,
-    uint32_t taskBudget) {
+    uint32_t taskBudget,
+    bool localWrites) {
   auto refName = streamRefName(name);
   if (shards.empty()) {
     throw kiln::Error(
@@ -34,7 +35,8 @@ folly::coro::Task<StreamInfo> Registry::co_create(
   StreamInfo info{
       .shards = std::move(shards),
       .stopFraction = stopFraction,
-      .taskBudget = taskBudget};
+      .taskBudget = taskBudget,
+      .localWrites = localWrites};
   // Checks the size before making a bucket.
   info.encode();
   info.bucket = co_await kiln_->co_createBucket();

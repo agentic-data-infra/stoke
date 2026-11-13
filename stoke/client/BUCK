@@ -20,6 +20,7 @@ cxx_library(
         ":registry",
         "//stoke/rpc:rpc",
     ],
+    deps = ["kiln//kiln/client:client"],
     visibility = ["PUBLIC"],
 )
 
