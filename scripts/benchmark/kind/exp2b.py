@@ -6,11 +6,13 @@ over the nodes.
 
     python exp2b.py {grain,zephon,stoke} DATA_DIR --budget C --dop N --step_ms S [--steps M]
 
-The budget of C CPUs is split evenly: node i (of kind's worker nodes, by
-name) owns cores 2i and 2i+1, CPUs 2i, 2i+8, 2i+1 and 2i+9; its share of
-the budget is the first C/4 of 2i, 2i+8, 2i+1 and its trainer runs on 2i+9.
-Each node's container is held to its four CPUs and to --memory plus 1 GiB,
-and each pod to --memory. The knob N is split evenly too: N/4 Grain or
+The CPUs are Experiment 2's: the budget of C CPUs is the first C/2 cores,
+both hyperthreads of each (0, 8, 1, 9, ...), split evenly over the nodes
+in that order (node i of kind's worker nodes, by name, gets the i-th C/4
+of them), and the trainers run on CPUs 6, 7, 14 and 15, cores that no
+budget CPU shares. Each node's container is held to its share of the
+budget and its trainer's CPU and to --memory plus 1 GiB, and each pod to
+--memory. The knob N is split evenly too: N/4 Grain or
 Zephon workers per trainer (as exp2.py), N/4 slots per Ember worker.
 
 DATA_DIR is a path under ~/data, which the nodes mount at /hostdata; the
@@ -57,8 +59,14 @@ def worker_nodes():
     return [(n["metadata"]["name"], ip(n)) for n in nodes]
 
 
-def node_cpus(i, share):
-    return [2 * i, 2 * i + 8, 2 * i + 1][:share], 2 * i + 9
+TRAINER_CPUS = [6, 7, 14, 15]
+
+
+def node_cpus(i, budget, nodes):
+    """Node i's share of the budget, and its trainer's CPU."""
+    cpus = [c for k in range(budget // 2) for c in (k, k + 8)]
+    share = budget // nodes
+    return cpus[i * share:(i + 1) * share], TRAINER_CPUS[i]
 
 
 def pod(name, node, image, memory, command):
@@ -116,7 +124,7 @@ def main():
     n = len(nodes)
     if args.budget % n or args.dop % n:
         parser.error(f"--budget and --dop must be multiples of the {n} nodes")
-    share, dop = args.budget // n, args.dop // n
+    dop = args.dop // n
     data = "/hostdata/" + os.path.relpath(os.path.realpath(args.data_dir), DATA)
     # Kiln per node: what its Ember tasks may hold unconsumed, plus 1 GiB of
     # blocks freed during the grace period (exp2.py's 4 GiB over 4 nodes), in
@@ -135,7 +143,7 @@ def main():
     kubectl("delete", "pod", "-l", "app=dlbench", "--wait", "--ignore-not-found")
     pods = []
     for i, (name, _) in enumerate(nodes):
-        budget, trainer = node_cpus(i, share)
+        budget, trainer = node_cpus(i, args.budget, n)
         subprocess.run(
             ["docker", "update", f"--cpuset-cpus={','.join(map(str, budget + [trainer]))}",
              f"--memory={mem_bytes + (1 << 30)}", f"--memory-swap={mem_bytes + (1 << 30)}", name],

@@ -131,10 +131,10 @@ loader, all on the node's network:
   them from any node over TCP (and from their own node's DRAM regions
   directly, as Kiln does on one host).
 
-The budget and the knob are split evenly over the nodes: node i holds
-cores 2i and 2i+1 (CPUs 2i, 2i+8, 2i+1, 2i+9), its share of a budget of C
-CPUs is the first C/4 of 2i, 2i+8 and 2i+1, and its trainer runs on 2i+9.
-Each node's container is held to those CPUs, each pod to 6 GiB (24 GiB in
+The CPUs are Experiment 2's (the budget's C/2 cores from core 0 up, the
+trainers on CPUs 6, 7, 14 and 15), the budget split evenly over the nodes
+in that order, and so is the knob. Each node's container is held to its
+CPUs, each pod to 6 GiB (24 GiB in
 all, as Experiment 2) and pinned as in Experiment 2. CPU is the sum of the
 pods' cgroups, peak memory the sum of the pods' peaks. Kiln gets, per
 node, what its Ember worker's tasks may hold unconsumed plus 1 GiB. Each
