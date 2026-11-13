@@ -1,7 +1,8 @@
 # Dataloader benchmark
 
 Compares stoke with [Grain](https://github.com/google/grain) and Zephon as
-the dataloader of one trainer.
+dataloaders: Experiment 1 with one trainer and no preprocessing,
+Experiment 2 with four trainers and online filtering and packing.
 
 **Experiment 1** is pure data movement. The dataset is 20 GB of GPT-2
 tokens, pre-batched: each Parquet row is one batch of 32 sequences of
@@ -65,3 +66,45 @@ Kiln runs as one local DRAM server, sized for what the stream may hold
 unconsumed plus 4 GiB for the chunks removed within Kiln's grace period
 (1 s), whose blocks it reuses only after it (`Stoke.kiln_gib` in
 `bench.py`).
+
+## Experiment 2
+
+Real preprocessing with several consumers. The data is FineWeb-Edu
+`sample/10BT` (the first 7 files), tokenized once offline with GPT-2 (HF
+tokenizers): one row per document with its tokens (ending in
+`<|endoftext|>`), `int_score`, `language_score` and `token_count`, in
+files of 16 row groups (`prep_tokenized.py`). Online, every loader does
+the same work (`exp2_common.py`):
+
+1. keep documents with `int_score >= 3`, `language_score >= 0.9` and at
+   least 64 tokens;
+2. pack them: join their tokens and cut sequences of 4097 tokens, 32
+   sequences per batch;
+3. shuffle, and feed 4 trainers.
+
+- stoke: the Ember feed job (`feed_exp2.py`) filters, and its stream
+  writer packs (`write.stream(batch=32, sequence=4096)`); each trainer
+  runs a stoke loader on the stream.
+- Grain and Zephon: one pipeline per trainer, with its built-in Parquet
+  reader, filter and packing (Grain `ConcatThenSplitIterDataset`, Zephon
+  `pack_flat(algorithm="wrap")`).
+
+No loader shuffles single documents (see `exp2.py`).
+
+Each trainer is a process of its own that takes a batch, then sleeps for
+a fixed step time, and measures how much of the time it waits for data.
+The trainers run outside the core budget (CPUs 6, 7, 14, 15); everything
+else (the loaders' processes and threads, for stoke also Kiln, the
+shards and the Ember job) runs in it. The main number is the max
+sustainable rate: the fastest step at which every trainer waits less than
+1% of the time, per budget (4, 8 and 12 CPUs). Each run also reports the
+CPU used (overall and in steady state) and the peak memory.
+
+```
+python prep_tokenized.py ~/data/dlbench-exp2 fineweb-edu/sample/10BT/00[0-6]_00000.parquet
+PYTHON=$VENV/bin/python EMBER_HOME=... STOKE_BUILD=... ./run_exp2.sh OUT_DIR [DATA_DIR]
+```
+
+`run_exp2.sh` sweeps the step time from slow to fast (`STEP_MS`) for
+each loader, budget and rep, and stops at the first rate that is not
+sustained. stoke needs an Ember build with stream packing.
