@@ -6,12 +6,15 @@ shuffles them (exp2_common.py):
 - stoke: the Ember feed job (feed_exp2.py) filters, and its stream writer
   packs; each rank runs a stoke Loader on the stream.
 - Grain: one pipeline per rank over every RANKS-th file (in shuffled order):
-  ParquetIterDataset, interleaved, filter, ConcatThenSplitIterDataset,
-  batch, WindowShuffleIterDataset over 64 batches (as in Experiment 1),
+  ParquetIterDataset, interleaved, filter, join_and_cut (a plain
+  concat-then-split like the others'), batch, WindowShuffleIterDataset over 64 batches (as in Experiment 1),
   mp_prefetch with DOP / RANKS workers.
 - Zephon: one pipeline per rank (world_size RANKS, its rank): documents in
   shuffled shard order, a filter (map_transform), pack_flat (wrap, no
   positions), batch, with DOP / RANKS workers.
+
+Each loader buffers BUFFERED batches per trainer (Grain's default of one
+per worker turned every row-group read into trainer waits).
 
 No loader shuffles single documents: order comes from shuffled files or
 shards (Grain, Zephon; Zephon's in-shard shuffle reads rows at random and
@@ -54,6 +57,50 @@ import bench
 from exp2_common import BATCH, END_OF_TEXT, SEQ, keep
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+# Batches each loader buffers per trainer: stoke's Loader default
+# (min_buffered_batches), and Grain's and Zephon's prefetch.
+BUFFERED = 64
+
+
+def join_and_cut(docs):
+    """Joins the documents' tokens and cuts them into sequences of SEQ, as
+    the other loaders pack (Grain's ConcatThenSplitIterDataset would also
+    compute positions and segment ids)."""
+    parts, buffered = [], 0
+    for doc in docs:
+        parts.append(doc["tokens"])
+        buffered += len(doc["tokens"])
+        if buffered >= SEQ:
+            tokens = np.concatenate(parts)
+            cut = len(tokens) - len(tokens) % SEQ
+            yield from tokens[:cut].reshape(-1, SEQ)
+            parts, buffered = [tokens[cut:]], len(tokens) - cut
+
+
+def JoinAndCut(parent):  # noqa: N802
+    import grain
+
+    class Iterator(grain.DatasetIterator):
+        def __init__(self, parent):
+            super().__init__(parent)
+            self._sequences = join_and_cut(parent)
+
+        def __next__(self):
+            return next(self._sequences)
+
+        # Grain's prefetch asks for the state of every element; the benchmark
+        # never restores it.
+        def get_state(self):
+            return self._parent.get_state()
+
+        def set_state(self, state):
+            raise NotImplementedError
+
+    class Dataset(grain.IterDataset):
+        def __iter__(self):
+            return Iterator(self._parent.__iter__())
+
+    return Dataset(parent)
 
 
 def grain_batches(data_dir, rank, ranks, workers, work):
@@ -64,12 +111,12 @@ def grain_batches(data_dir, rank, ranks, workers, work):
     ds = grain.MapDataset.source(files).shuffle(seed=0)[rank::ranks]
     ds = ds.map(lambda path: ge.ParquetIterDataset(path))
     ds = ge.InterleaveIterDataset(ds, cycle_length=workers)
-    ds = ds.filter(keep).map(lambda doc: {"tokens": doc["tokens"]})
-    ds = ge.ConcatThenSplitIterDataset(ds, length_struct={"tokens": SEQ})
-    ds = ds.map(lambda seq: seq["tokens"])
+    ds = JoinAndCut(ds.filter(keep))
     ds = ds.batch(BATCH, drop_remainder=True)
     ds = ge.WindowShuffleIterDataset(ds, window_size=64, seed=rank)
-    ds = ds.mp_prefetch(grain.MultiprocessingOptions(num_workers=workers))
+    ds = ds.mp_prefetch(
+        grain.MultiprocessingOptions(num_workers=workers, per_worker_buffer_size=-(-BUFFERED // workers))
+    )
     yield from ds
 
 
@@ -90,7 +137,10 @@ def zephon_batches(data_dir, rank, ranks, workers, work):
         .map_transform(lambda doc: {"tokens": doc["tokens"]} if keep(doc) else None)
         .pack_flat(SEQ, algorithm="wrap", tokens_field="tokens", emit_positions=False)
         .batch(BATCH)
-        .options(max_workers=workers, world_size=ranks, global_rank=rank, aggregate_dir=work)
+        .options(
+            max_workers=workers, prefetch_batches=BUFFERED, world_size=ranks, global_rank=rank,
+            aggregate_dir=work,
+        )
     )
     for batch in pipeline:
         yield batch.to_training(tokens_field="tokens", dtype=np.int32)["input_ids"]

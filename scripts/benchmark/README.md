@@ -86,10 +86,13 @@ the same work (`exp2_common.py`):
   writer packs (`write.stream(batch=32, sequence=4096)`); each trainer
   runs a stoke loader on the stream.
 - Grain and Zephon: one pipeline per trainer, with its built-in Parquet
-  reader, filter and packing (Grain `ConcatThenSplitIterDataset`, Zephon
-  `pack_flat(algorithm="wrap")`).
+  reader and filter. Zephon packs with `pack_flat(algorithm="wrap")`
+  without positions; Grain with a plain join-and-cut iterator (its
+  `ConcatThenSplitIterDataset` would also compute positions and segment
+  ids, which the others do not).
 
-No loader shuffles single documents (see `exp2.py`).
+Every loader buffers 64 batches per trainer (stoke's loader default), and
+no loader shuffles single documents (see `exp2.py`).
 
 Each trainer is a process of its own that takes a batch, then sleeps for
 a fixed step time, and measures how much of the time it waits for data.
@@ -105,6 +108,8 @@ python prep_tokenized.py ~/data/dlbench-exp2 fineweb-edu/sample/10BT/00[0-6]_000
 PYTHON=$VENV/bin/python EMBER_HOME=... STOKE_BUILD=... ./run_exp2.sh OUT_DIR [DATA_DIR]
 ```
 
-`run_exp2.sh` sweeps the step time from slow to fast (`STEP_MS`) for
-each loader, budget and rep, and stops at the first rate that is not
-sustained. stoke needs an Ember build with stream packing.
+For each loader, budget and rep, `run_exp2.sh` first runs the trainers
+unthrottled to get the slowest one's rate R, then bisects between 0.25 R
+and 2 R for the fastest rate every trainer sustains. `summarize_exp2.py
+OUT_DIR` makes the table (median and range over the reps). stoke needs
+an Ember build with stream packing (ember#86).
