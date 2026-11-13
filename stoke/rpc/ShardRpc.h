@@ -21,20 +21,25 @@ class ShardRpc {
  public:
   virtual ~ShardRpc() = default;
 
-  // Queues 'chunk', or hands it straight to a waiting take. Returns false
-  // for a chunk the shard had already, which it drops.
+  // Queues 'chunk', stored on 'host' (where its Kiln blocks are, empty if
+  // unknown), or hands it straight to a waiting take. Returns false for a
+  // chunk the shard had already, which it drops.
   virtual folly::coro::Task<bool> co_put(
       std::string stream,
-      kiln::ChunkId chunk) = 0;
+      kiln::ChunkId chunk,
+      std::string host) = 0;
 
-  // Up to 'max' chunks, leased to 'epoch'. With none queued, waits up to
-  // 'wait' for one to be put. Returns no chunks if none came in time, or
-  // with 'end' once the stream ended at this shard.
+  // Up to 'max' chunks, leased to 'epoch': those stored on 'host' (the
+  // consumer's) first, then, unless 'hostOnly', any others. With none
+  // queued, waits up to 'wait' for one to be put. Returns no chunks if none
+  // came in time, or with 'end' once the stream ended at this shard.
   virtual folly::coro::Task<TakeResult> co_take(
       std::string stream,
       Epoch epoch,
       uint32_t max,
-      std::chrono::milliseconds wait) = 0;
+      std::chrono::milliseconds wait,
+      std::string host,
+      bool hostOnly) = 0;
 
   // Ends the leases of 'epoch' on 'chunks': they were consumed. Others are
   // ignored.

@@ -146,13 +146,18 @@ def zephon_batches(data_dir, rank, ranks, workers, work):
         yield batch.to_training(tokens_field="tokens", dtype=np.int32)["input_ids"]
 
 
-def stoke_batches(build, metadata, stream, rank, fetchers):
+def stoke_batches(build, metadata, stream, rank, fetchers, stats_path=None):
     sys.path.insert(0, os.path.join(build, "bin"))
     import _stoke
 
     loader = _stoke.Loader(metadata, stream, f"bench-rank{rank}", fetchers=fetchers, seed=rank)
-    for tensor in loader:
-        yield np.from_dlpack(tensor)
+    try:
+        for tensor in loader:
+            yield np.from_dlpack(tensor)
+    finally:
+        if stats_path:  # the loader's stats, once the trainer is done with it
+            with open(stats_path, "w") as f:
+                json.dump(loader.stats(), f)
 
 
 def rank_main(args, rank, stream, results):
@@ -166,7 +171,7 @@ def rank_main(args, rank, stream, results):
 def train(args, rank, stream):
     """One trainer: takes args.steps batches (0: all), one per step."""
     if args.loader == "stoke":
-        batches = stoke_batches(args.build, *stream, rank, args.fetchers)
+        batches = stoke_batches(args.build, *stream, rank, args.fetchers, getattr(args, "loader_stats", None))
     else:
         workers = args.dop // args.ranks
         batches = {"grain": grain_batches, "zephon": zephon_batches}[args.loader](

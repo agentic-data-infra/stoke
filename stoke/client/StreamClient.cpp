@@ -2,6 +2,7 @@
 
 #include <folly/coro/Collect.h>
 
+#include "kiln/client/Client.h"
 #include "kiln/common/Error.h"
 #include "stoke/rpc/Rpc.h"
 
@@ -35,9 +36,11 @@ StreamClient::StreamClient(
   }
 }
 
-folly::coro::Task<bool> StreamClient::co_put(kiln::ChunkId chunk) {
+folly::coro::Task<bool> StreamClient::co_put(
+    kiln::ChunkId chunk,
+    std::string host) {
   auto& shard = *shards_[shardOf(chunk, numShards())];
-  co_return co_await shard.co_put(stream_, chunk);
+  co_return co_await shard.co_put(stream_, chunk, std::move(host));
 }
 
 folly::coro::Task<bool> StreamClient::co_awaitConsumed(
@@ -54,6 +57,17 @@ folly::coro::Task<std::vector<ShardStats>> StreamClient::co_stats() {
     calls.push_back(shard->co_stats(stream_));
   }
   co_return co_await folly::coro::collectAllRange(std::move(calls));
+}
+
+folly::coro::Task<std::string> co_chunkHost(
+    kiln::client::Client& kiln,
+    const kiln::ChunkInfo& chunk) {
+  if (chunk.replicas.empty() || chunk.replicas.front().blocks.empty()) {
+    co_return "";
+  }
+  const std::vector<kiln::BlockRef> first{chunk.replicas.front().blocks.front()};
+  auto regions = co_await kiln.co_regions(first);
+  co_return regions.front().shm ? regions.front().shm->host : "";
 }
 
 } // namespace stoke

@@ -4,6 +4,7 @@
 #include <condition_variable>
 #include <cstdint>
 #include <deque>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -73,6 +74,9 @@ struct LoaderStats {
   // Chunk buffers allocated; the other chunks were read into buffers that
   // released batches gave back.
   uint64_t allocatedBuffers{0};
+  // Chunks read, by the host Kiln stored them on ("" if unknown): those of
+  // this host's were read locally.
+  std::map<std::string, uint64_t> chunksByHost;
 };
 
 // The consumer side of a stream, one per rank: fetcher threads take chunks
@@ -125,6 +129,8 @@ class Loader {
   const std::shared_ptr<kiln::client::Client> kiln_;
   const LoaderOptions options_;
   const std::shared_ptr<ChunkBuffers> buffers_;
+  // Takes get chunks stored on this host first.
+  const std::string host_;
 
   mutable std::mutex mutex_;
   std::condition_variable batchesReady_;

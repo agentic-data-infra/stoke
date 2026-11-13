@@ -52,7 +52,7 @@ class ProducerTest : public testing::Test {
   void consume(const kiln::ChunkId& chunk) {
     auto& shard = stream_->shard(shardOf(chunk, kShards));
     while (true) {
-      auto taken = blockingWait(shard.co_take("s", kEpoch, 64, milliseconds(0)));
+      auto taken = blockingWait(shard.co_take("s", kEpoch, 64, milliseconds(0), "", false));
       blockingWait(shard.co_ack("s", kEpoch, {chunk}));
       // Others go back for later.
       blockingWait(shard.co_release("s", kEpoch));
@@ -111,6 +111,25 @@ TEST_F(ProducerTest, waitsAtTheBudgetUntilTheOldestIsConsumed) {
   EXPECT_EQ(producer->unconsumed(), 2);
   EXPECT_EQ(unacked(), 2);
   EXPECT_GE(producer->waited(), milliseconds(150));
+}
+
+// The producer puts each chunk with the host Kiln stored it on (here, all
+// of them on this one), which a take from that host gets first.
+TEST_F(ProducerTest, putsChunksWithTheirHost) {
+  auto producer = makeProducer(0);
+  for (uint32_t i = 0; i < kShards; ++i) {
+    blockingWait(stream_->shard(i).co_put(
+        "s", kiln::ChunkId{1, i}, "elsewhere"));
+  }
+  auto id = blockingWait(producer->co_put("chunk"));
+  auto taken = blockingWait(stream_->shard(shardOf(id, kShards))
+                                .co_take(
+                                    "s",
+                                    kEpoch,
+                                    1,
+                                    milliseconds(0),
+                                    kiln::localHostName(), false));
+  EXPECT_EQ(taken.chunks, std::vector{id});
 }
 
 // A chunk the caller writes itself (co_create, then co_put of its id)
@@ -176,7 +195,7 @@ TEST_F(ProducerTest, boundHoldsWithASlowConsumer) {
   uint32_t next = 0;
   while (consumed < kChunks) {
     auto& shard = stream_->shard(next++ % kShards);
-    auto taken = blockingWait(shard.co_take("s", kEpoch, 1, milliseconds(20)));
+    auto taken = blockingWait(shard.co_take("s", kEpoch, 1, milliseconds(20), "", false));
     most = std::max(most, unacked());
     if (taken.chunks.empty()) {
       continue;

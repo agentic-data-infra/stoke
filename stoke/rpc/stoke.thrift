@@ -55,7 +55,7 @@ struct ShardStats {
 
 /// See stoke/rpc/ShardRpc.h. ('stream' is a Thrift keyword.)
 service ShardService {
-  bool put(1: string streamName, 2: ChunkId chunk) throws (
+  bool put(1: string streamName, 2: ChunkId chunk, 3: string host) throws (
     1: StokeException e,
   );
 
@@ -64,6 +64,8 @@ service ShardService {
     2: Epoch epoch,
     3: i32 max,
     4: i64 waitMs,
+    5: string host,
+    6: bool hostOnly,
   ) throws (1: StokeException e);
 
   void ack(

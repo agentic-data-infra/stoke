@@ -146,5 +146,11 @@ kind/build_image.sh $EMBER_HOME     # dlbench:<commit>, loaded into the cluster
 KIND=1 IMAGE=dlbench:<commit> PYTHON=$VENV/bin/python ./run_exp2.sh OUT_DIR ~/data/DATA_DIR
 ```
 
+With `LOCAL_WRITES=1` the stoke stream is created with `--local_writes`.
+Each run also records the bytes every node sent over its network and, for
+stoke, the chunks each loader read by the node they were stored on;
+`summarize_locality.py OUT_DIR...` tabulates those (local reads, chunks per
+Kiln server, network and CPU per billion tokens) per budget.
+
 Nothing else may run in the cluster's `ember` namespace (the pods use the
 nodes' ports 7077-7078 and 7570-7590).

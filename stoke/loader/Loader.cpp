@@ -83,6 +83,7 @@ Loader::Loader(
       kiln_{std::move(kiln)},
       options_{std::move(options)},
       buffers_{std::make_shared<ChunkBuffers>(kiln_)},
+      host_{kiln::localHostName()},
       ended_(stream_->numShards(), false) {
   if (options_.fetchers == 0 || options_.minBufferedBatches == 0 ||
       options_.chunksPerTake == 0) {
@@ -243,18 +244,40 @@ folly::coro::Task<void> Loader::co_fetch(std::mt19937_64& random) {
   const auto& name = stream_->stream();
   TakeResult result;
   uint32_t shard = 0;
-  // Two shards without waiting, then a wait at a third.
-  for (int attempt = 0; attempt < 3; ++attempt) {
-    auto picked = pickShard(random);
-    if (!picked) {
-      co_return;
+  // This host's chunks at every shard, from a random one on, without
+  // waiting; then any chunks at two shards without waiting, then a wait at
+  // a third.
+  const auto shards = stream_->numShards();
+  const auto first = pickShard(random);
+  if (!first) {
+    co_return;
+  }
+  const uint32_t attempts = shards + 3;
+  for (uint32_t attempt = 0; attempt < attempts; ++attempt) {
+    const bool hostOnly = attempt < shards;
+    if (hostOnly) {
+      shard = (*first + attempt) % shards;
+      std::lock_guard lock(mutex_);
+      if (ended_[shard]) {
+        continue;
+      }
+    } else {
+      auto picked = pickShard(random);
+      if (!picked) {
+        co_return;
+      }
+      shard = *picked;
     }
-    shard = *picked;
-    const auto wait =
-        attempt < 2 ? std::chrono::milliseconds(0) : options_.wait;
+    const auto wait = attempt + 1 < attempts ? std::chrono::milliseconds(0)
+                                             : options_.wait;
     const auto start = Clock::now();
     result = co_await stream_->shard(shard).co_take(
-        name, options_.epoch, options_.chunksPerTake, wait);
+        name,
+        options_.epoch,
+        options_.chunksPerTake,
+        wait,
+        host_,
+        hostOnly);
     std::lock_guard lock(mutex_);
     ++stats_.takes;
     stats_.takeTime += Clock::now() - start;
@@ -276,6 +299,7 @@ folly::coro::Task<void> Loader::co_fetch(std::mt19937_64& random) {
   for (const auto& chunk : result.chunks) {
     try {
       auto info = co_await kiln_->co_stat(chunk);
+      std::string host;
       std::shared_ptr<const kiln::Buffer> data;
       std::vector<format::BatchView> views;
       if (info.size > 0) {
@@ -302,6 +326,8 @@ folly::coro::Task<void> Loader::co_fetch(std::mt19937_64& random) {
         buffer.setSize(info.size);
         data = buffers_->share(std::move(buffer));
         views = format::parseChunk({data->data(), data->size()});
+        // The chunk's regions are cached by the read.
+        host = co_await co_chunkHost(*kiln_, info);
       }
       if (options_.removeChunks) {
         co_await kiln_->co_remove(chunk);
@@ -309,6 +335,7 @@ folly::coro::Task<void> Loader::co_fetch(std::mt19937_64& random) {
       {
         std::lock_guard lock(mutex_);
         ++stats_.chunks;
+        ++stats_.chunksByHost[host];
         stats_.bytes += info.size;
         batchesRead_ += views.size();
         for (auto& view : views) {

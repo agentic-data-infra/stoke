@@ -23,7 +23,7 @@
 # FACTORS ("1"), REPS (3), MAX_STEPS (1000), LOW (0.25), HIGH (2), PROBES (5),
 # SECONDS_PER_RUN (15), MEMORY_MAX (24G), PYTHON (python3: the benchmark's
 # venv); for stoke EMBER_HOME and STOKE_BUILD (as in run_exp1.sh); with KIND, IMAGE (dlbench:6829197,
-# kind/build_image.sh) instead.
+# kind/build_image.sh) instead, and LOCAL_WRITES=1 for stoke streams with local writes.
 
 set -euo pipefail
 
@@ -71,7 +71,7 @@ run() {  # loader budget factor name step_ms steps; prints the JSON line
   cat "$data"/*.parquet >/dev/null  # warm the page cache
   if [[ -n ${KIND:-} ]]; then
     "$python" "$here/kind/exp2b.py" "$1" "$data" --budget="$2" --dop=$(($3 * $2)) --step_ms="$5" --steps="$6" \
-      --image="${IMAGE:-dlbench:6829197}" --out="$out/results.jsonl" --log_dir="$out/$4.nodes" >"$out/$4.log" 2>&1 ||
+      --image="${IMAGE:-dlbench:6829197}" ${LOCAL_WRITES:+--local_writes} --out="$out/results.jsonl" --log_dir="$out/$4.nodes" >"$out/$4.log" 2>&1 ||
       echo "failed, see $out/$4.log" >&2
     grep '^{' "$out/$4.log" | tail -1
     return

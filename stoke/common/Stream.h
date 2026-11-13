@@ -34,6 +34,9 @@ struct StreamInfo {
   // Chunks each producer (e.g. each Ember task) may have put and not yet
   // seen consumed; before writing more it waits (Producer). 0 for no limit.
   uint32_t taskBudget{0};
+  // Producers write chunks to their own host's Kiln server first (see
+  // Producer), for deployments with a Kiln server on every producer's host.
+  bool localWrites{false};
 
   // Throws kiln::Error(kInvalidArgument) if the JSON does not fit a Kiln
   // ref value (kiln::kMaxRefValueSize, a few dozen shards).

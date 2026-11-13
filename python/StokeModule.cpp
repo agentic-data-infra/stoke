@@ -128,6 +128,11 @@ py::dict statsDict(const LoaderStats& stats) {
   result["buffered"] = stats.buffered;
   result["peak_buffered"] = stats.peakBuffered;
   result["allocated_buffers"] = stats.allocatedBuffers;
+  py::dict hosts;
+  for (const auto& [host, chunks] : stats.chunksByHost) {
+    hosts[py::str(host)] = chunks;
+  }
+  result["chunks_by_host"] = hosts;
   result["wait_seconds"] =
       std::chrono::duration<double>(stats.waitTime).count();
   return result;
@@ -266,17 +271,23 @@ PYBIND11_MODULE(_stoke, m) {
          std::string stream,
          std::vector<std::string> shards,
          double stopFraction,
-         uint32_t taskBudget) {
+         uint32_t taskBudget,
+         bool localWrites) {
         py::gil_scoped_release release;
         Registry registry(connectKiln(metadata));
         folly::coro::blockingWait(registry.co_create(
-            std::move(stream), std::move(shards), stopFraction, taskBudget));
+            std::move(stream),
+            std::move(shards),
+            stopFraction,
+            taskBudget,
+            localWrites));
       },
       py::arg("metadata"),
       py::arg("stream"),
       py::arg("shards"),
       py::arg("stop_fraction") = 0.95,
-      py::arg("task_budget") = 0);
+      py::arg("task_budget") = 0,
+      py::arg("local_writes") = false);
   m.def(
       "seal_stream",
       [](const std::string& metadata, std::string stream) {

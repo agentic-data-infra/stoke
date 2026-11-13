@@ -109,25 +109,34 @@ class RemoteShard : public ShardRpc {
   explicit RemoteShard(const kiln::Endpoint& endpoint)
       : connection_{endpoint} {}
 
-  folly::coro::Task<bool> co_put(std::string stream, kiln::ChunkId chunk)
-      override {
+  folly::coro::Task<bool> co_put(
+      std::string stream,
+      kiln::ChunkId chunk,
+      std::string host) override {
     const auto request = toThrift(chunk);
     auto client = connection_.client();
     co_return co_await connection_.translated(
-        client, client->co_put(stream, request));
+        client, client->co_put(stream, request, host));
   }
 
   folly::coro::Task<TakeResult> co_take(
       std::string stream,
       Epoch epoch,
       uint32_t max,
-      std::chrono::milliseconds wait) override {
+      std::chrono::milliseconds wait,
+      std::string host,
+      bool hostOnly) override {
     const auto request = toThrift(epoch);
     auto client = connection_.client();
     co_return fromThrift(co_await connection_.translated(
         client,
         client->co_take(
-            stream, request, static_cast<int32_t>(max), wait.count())));
+            stream,
+            request,
+            static_cast<int32_t>(max),
+            wait.count(),
+            host,
+            hostOnly)));
   }
 
   folly::coro::Task<void> co_ack(

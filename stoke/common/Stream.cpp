@@ -35,7 +35,7 @@ std::string StreamInfo::encode() const {
   }
   folly::dynamic json = folly::dynamic::object("bucket", bucket)(
       "shards", std::move(shardList))("state", stateName(state))(
-      "stopFraction", stopFraction)("taskBudget", taskBudget);
+      "stopFraction", stopFraction)("taskBudget", taskBudget)("localWrites", localWrites);
   auto value = folly::toJson(json);
   if (value.size() > kiln::kMaxRefValueSize) {
     throw kiln::Error(
@@ -59,6 +59,7 @@ StreamInfo StreamInfo::decode(std::string_view value) {
     // Absent in entries written before the budget existed.
     info.taskBudget =
         static_cast<uint32_t>(json.getDefault("taskBudget", 0).asInt());
+    info.localWrites = json.getDefault("localWrites", false).asBool();
     return info;
   } catch (const kiln::Error&) {
     throw;

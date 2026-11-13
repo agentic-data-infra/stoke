@@ -1,5 +1,6 @@
 #include "stoke/shard/Shard.h"
 
+#include <algorithm>
 #include <thread>
 
 #include <folly/coro/BlockingWait.h>
@@ -48,16 +49,16 @@ class ShardTest : public testing::Test {
 TEST_F(ShardTest, putsAndTakesOnce) {
   auto shard = makeShard();
   for (uint64_t i = 0; i < 5; ++i) {
-    EXPECT_TRUE(blockingWait(shard->co_put("s", chunk(i))));
+    EXPECT_TRUE(blockingWait(shard->co_put("s", chunk(i), "")));
   }
-  EXPECT_FALSE(blockingWait(shard->co_put("s", chunk(3))));
+  EXPECT_FALSE(blockingWait(shard->co_put("s", chunk(3), "")));
 
-  auto first = blockingWait(shard->co_take("s", kEpoch, 3, milliseconds(0)));
+  auto first = blockingWait(shard->co_take("s", kEpoch, 3, milliseconds(0), "", false));
   EXPECT_EQ(first.chunks, (std::vector{chunk(0), chunk(1), chunk(2)}));
   EXPECT_FALSE(first.end);
-  auto second = blockingWait(shard->co_take("s", kEpoch, 3, milliseconds(0)));
+  auto second = blockingWait(shard->co_take("s", kEpoch, 3, milliseconds(0), "", false));
   EXPECT_EQ(second.chunks, (std::vector{chunk(3), chunk(4)}));
-  auto empty = blockingWait(shard->co_take("s", kEpoch, 3, milliseconds(0)));
+  auto empty = blockingWait(shard->co_take("s", kEpoch, 3, milliseconds(0), "", false));
   EXPECT_TRUE(empty.chunks.empty());
   EXPECT_FALSE(empty.end);
 
@@ -74,16 +75,16 @@ TEST_F(ShardTest, putsAndTakesOnce) {
 TEST_F(ShardTest, rejectsUnknownStreamsAndBadArguments) {
   auto shard = makeShard();
   try {
-    blockingWait(shard->co_put("nope", chunk(1)));
+    blockingWait(shard->co_put("nope", chunk(1), ""));
     FAIL();
   } catch (const kiln::Error& e) {
     EXPECT_EQ(e.code(), kiln::ErrorCode::kNotFound);
   }
   EXPECT_THROW(
-      blockingWait(shard->co_take("s", kEpoch, 0, milliseconds(0))),
+      blockingWait(shard->co_take("s", kEpoch, 0, milliseconds(0), "", false)),
       kiln::Error);
   EXPECT_THROW(
-      blockingWait(shard->co_take("s", kEpoch, 1, std::chrono::minutes(1))),
+      blockingWait(shard->co_take("s", kEpoch, 1, std::chrono::minutes(1), "", false)),
       kiln::Error);
 }
 
@@ -91,11 +92,11 @@ TEST_F(ShardTest, waitingTakeGetsTheNextPut) {
   auto shard = makeShard();
   std::thread producer([&] {
     std::this_thread::sleep_for(milliseconds(100));
-    blockingWait(shard->co_put("s", chunk(7)));
+    blockingWait(shard->co_put("s", chunk(7), ""));
   });
   auto start = std::chrono::steady_clock::now();
   auto result =
-      blockingWait(shard->co_take("s", kEpoch, 10, std::chrono::seconds(5)));
+      blockingWait(shard->co_take("s", kEpoch, 10, std::chrono::seconds(5), "", false));
   auto waited = std::chrono::steady_clock::now() - start;
   producer.join();
   EXPECT_EQ(result.chunks, std::vector{chunk(7)});
@@ -107,22 +108,22 @@ TEST_F(ShardTest, waitingTakeTimesOut) {
   auto shard = makeShard();
   auto start = std::chrono::steady_clock::now();
   auto result =
-      blockingWait(shard->co_take("s", kEpoch, 10, milliseconds(100)));
+      blockingWait(shard->co_take("s", kEpoch, 10, milliseconds(100), "", false));
   EXPECT_GE(std::chrono::steady_clock::now() - start, milliseconds(100));
   EXPECT_TRUE(result.chunks.empty());
   EXPECT_FALSE(result.end);
   // The next put is queued, not handed to the take that gave up.
-  blockingWait(shard->co_put("s", chunk(1)));
+  blockingWait(shard->co_put("s", chunk(1), ""));
   EXPECT_EQ(blockingWait(shard->co_stats("s")).depth, 1);
 }
 
 TEST_F(ShardTest, awaitConsumedSeesAcks) {
   auto shard = makeShard();
-  blockingWait(shard->co_put("s", chunk(1)));
-  blockingWait(shard->co_put("s", chunk(2)));
+  blockingWait(shard->co_put("s", chunk(1), ""));
+  blockingWait(shard->co_put("s", chunk(2), ""));
   EXPECT_FALSE(blockingWait(shard->co_awaitConsumed("s", chunk(1), {})));
 
-  auto taken = blockingWait(shard->co_take("s", kEpoch, 2, milliseconds(0)));
+  auto taken = blockingWait(shard->co_take("s", kEpoch, 2, milliseconds(0), "", false));
   // Taken is not consumed, and nor is a released chunk.
   EXPECT_FALSE(blockingWait(shard->co_awaitConsumed("s", chunk(1), {})));
   blockingWait(shard->co_ack("s", kEpoch, {chunk(1)}));
@@ -133,8 +134,8 @@ TEST_F(ShardTest, awaitConsumedSeesAcks) {
 
 TEST_F(ShardTest, awaitConsumedWaitsForTheAck) {
   auto shard = makeShard();
-  blockingWait(shard->co_put("s", chunk(1)));
-  blockingWait(shard->co_take("s", kEpoch, 1, milliseconds(0)));
+  blockingWait(shard->co_put("s", chunk(1), ""));
+  blockingWait(shard->co_take("s", kEpoch, 1, milliseconds(0), "", false));
   std::thread consumer([&] {
     std::this_thread::sleep_for(milliseconds(100));
     blockingWait(shard->co_ack("s", kEpoch, {chunk(1)}));
@@ -150,13 +151,13 @@ TEST_F(ShardTest, awaitConsumedWaitsForTheAck) {
 
 TEST_F(ShardTest, awaitConsumedTimesOut) {
   auto shard = makeShard();
-  blockingWait(shard->co_put("s", chunk(1)));
+  blockingWait(shard->co_put("s", chunk(1), ""));
   auto start = std::chrono::steady_clock::now();
   EXPECT_FALSE(blockingWait(
       shard->co_awaitConsumed("s", chunk(1), milliseconds(100))));
   EXPECT_GE(std::chrono::steady_clock::now() - start, milliseconds(100));
   // A later ack still counts.
-  blockingWait(shard->co_take("s", kEpoch, 1, milliseconds(0)));
+  blockingWait(shard->co_take("s", kEpoch, 1, milliseconds(0), "", false));
   blockingWait(shard->co_ack("s", kEpoch, {chunk(1)}));
   EXPECT_TRUE(blockingWait(shard->co_awaitConsumed("s", chunk(1), {})));
 }
@@ -169,7 +170,7 @@ TEST_F(ShardTest, awaitConsumedRejectsUnknownChunksAndLongWaits) {
   } catch (const kiln::Error& e) {
     EXPECT_EQ(e.code(), kiln::ErrorCode::kNotFound);
   }
-  blockingWait(shard->co_put("s", chunk(1)));
+  blockingWait(shard->co_put("s", chunk(1), ""));
   try {
     blockingWait(
         shard->co_awaitConsumed("s", chunk(1), std::chrono::minutes(1)));
@@ -179,19 +180,98 @@ TEST_F(ShardTest, awaitConsumedRejectsUnknownChunksAndLongWaits) {
   }
 }
 
+// A take gets its host's chunks first, then the longest other queue's;
+// released chunks go back to their host's queue.
+TEST_F(ShardTest, takesLocalChunksFirst) {
+  auto shard = makeShard();
+  blockingWait(shard->co_put("s", chunk(0), "a"));
+  blockingWait(shard->co_put("s", chunk(1), "b"));
+  blockingWait(shard->co_put("s", chunk(2), "b"));
+  blockingWait(shard->co_put("s", chunk(3), "b"));
+  blockingWait(shard->co_put("s", chunk(4), "a"));
+  blockingWait(shard->co_put("s", chunk(5), ""));
+
+  auto take = [&](uint32_t max, const std::string& host) {
+    return blockingWait(shard->co_take("s", kEpoch, max, milliseconds(0), host, false))
+        .chunks;
+  };
+  EXPECT_EQ(take(1, "b"), std::vector{chunk(1)});
+  EXPECT_EQ(take(3, "a"), (std::vector{chunk(0), chunk(4), chunk(2)}));
+  // No chunks on "c": the longest queue ("b") first.
+  EXPECT_EQ(take(1, "c"), std::vector{chunk(3)});
+
+  EXPECT_EQ(blockingWait(shard->co_release("s", kEpoch)), 5);
+  auto sorted = [](std::vector<kiln::ChunkId> chunks) {
+    std::sort(chunks.begin(), chunks.end());
+    return chunks;
+  };
+  EXPECT_EQ(sorted(take(2, "a")), (std::vector{chunk(0), chunk(4)}));
+  EXPECT_EQ(take(1, ""), std::vector{chunk(5)});
+  EXPECT_EQ(sorted(take(10, "c")), (std::vector{chunk(1), chunk(2), chunk(3)}));
+}
+
+// A take for its host's chunks only gets none of the others'.
+TEST_F(ShardTest, takesOnlyItsHostsChunksIfAsked) {
+  auto shard = makeShard();
+  blockingWait(shard->co_put("s", chunk(1), "b"));
+  EXPECT_TRUE(
+      blockingWait(shard->co_take("s", kEpoch, 1, milliseconds(0), "a", true))
+          .chunks.empty());
+  blockingWait(shard->co_put("s", chunk(2), "a"));
+  EXPECT_EQ(
+      blockingWait(shard->co_take("s", kEpoch, 2, milliseconds(0), "a", true))
+          .chunks,
+      std::vector{chunk(2)});
+}
+
+// A chunk put goes to a parked take of its host first.
+TEST_F(ShardTest, putGoesToAParkedTakeOfItsHost) {
+  auto shard = makeShard();
+  TakeResult onA, onB;
+  std::thread a([&] {
+    onA = blockingWait(
+        shard->co_take("s", kEpoch, 1, std::chrono::seconds(5), "a", false));
+  });
+  std::this_thread::sleep_for(milliseconds(50));
+  std::thread b([&] {
+    onB = blockingWait(
+        shard->co_take("s", kEpoch, 1, std::chrono::seconds(5), "b", false));
+  });
+  std::this_thread::sleep_for(milliseconds(50));
+  blockingWait(shard->co_put("s", chunk(1), "b"));
+  b.join();
+  blockingWait(shard->co_put("s", chunk(2), "c"));
+  a.join();
+  EXPECT_EQ(onB.chunks, std::vector{chunk(1)});
+  EXPECT_EQ(onA.chunks, std::vector{chunk(2)});
+}
+
+// A parked take gets the next chunk put, from any host.
+TEST_F(ShardTest, parkedTakeGetsAnyHostsChunk) {
+  auto shard = makeShard();
+  std::thread putter([&] {
+    std::this_thread::sleep_for(milliseconds(50));
+    blockingWait(shard->co_put("s", chunk(7), "b"));
+  });
+  auto taken = blockingWait(
+      shard->co_take("s", kEpoch, 10, std::chrono::seconds(5), "a", false));
+  putter.join();
+  EXPECT_EQ(taken.chunks, std::vector{chunk(7)});
+}
+
 TEST_F(ShardTest, releaseReturnsAnEpochsLeases) {
   auto shard = makeShard();
   for (uint64_t i = 0; i < 4; ++i) {
-    blockingWait(shard->co_put("s", chunk(i)));
+    blockingWait(shard->co_put("s", chunk(i), ""));
   }
-  auto taken = blockingWait(shard->co_take("s", kEpoch, 3, milliseconds(0)));
+  auto taken = blockingWait(shard->co_take("s", kEpoch, 3, milliseconds(0), "", false));
   blockingWait(shard->co_ack("s", kEpoch, {taken.chunks[0]}));
   // Acks of another epoch do nothing.
   Epoch next{"job", 2};
   blockingWait(shard->co_ack("s", next, {taken.chunks[1]}));
 
   EXPECT_EQ(blockingWait(shard->co_release("s", kEpoch)), 2);
-  auto retaken = blockingWait(shard->co_take("s", next, 10, milliseconds(0)));
+  auto retaken = blockingWait(shard->co_take("s", next, 10, milliseconds(0), "", false));
   EXPECT_EQ(retaken.chunks.size(), 3);
   auto stats = blockingWait(shard->co_stats("s"));
   EXPECT_EQ(stats.released, 2);
@@ -200,8 +280,8 @@ TEST_F(ShardTest, releaseReturnsAnEpochsLeases) {
 
 TEST_F(ShardTest, expiredLeasesGoBackToTheQueue) {
   auto shard = makeShard(milliseconds(50));
-  blockingWait(shard->co_put("s", chunk(1)));
-  blockingWait(shard->co_take("s", kEpoch, 1, milliseconds(0)));
+  blockingWait(shard->co_put("s", chunk(1), ""));
+  blockingWait(shard->co_take("s", kEpoch, 1, milliseconds(0), "", false));
   std::this_thread::sleep_for(milliseconds(100));
   blockingWait(shard->co_refresh());
   auto stats = blockingWait(shard->co_stats("s"));
@@ -215,15 +295,15 @@ TEST_F(ShardTest, expiredLeasesGoBackToTheQueue) {
 TEST_F(ShardTest, sealedStreamEndsAfterStopFraction) {
   auto shard = makeShard();
   for (uint64_t i = 0; i < 4; ++i) {
-    blockingWait(shard->co_put("s", chunk(i)));
+    blockingWait(shard->co_put("s", chunk(i), ""));
   }
   blockingWait(registry_->co_seal("s"));
   blockingWait(shard->co_refresh());
   // stopFraction 0.5: two of the four chunks, then the end.
-  auto taken = blockingWait(shard->co_take("s", kEpoch, 2, milliseconds(0)));
+  auto taken = blockingWait(shard->co_take("s", kEpoch, 2, milliseconds(0), "", false));
   EXPECT_EQ(taken.chunks.size(), 2);
   EXPECT_FALSE(taken.end);
-  auto end = blockingWait(shard->co_take("s", kEpoch, 2, milliseconds(0)));
+  auto end = blockingWait(shard->co_take("s", kEpoch, 2, milliseconds(0), "", false));
   EXPECT_TRUE(end.chunks.empty());
   EXPECT_TRUE(end.end);
   EXPECT_TRUE(blockingWait(shard->co_stats("s")).ended);
@@ -237,14 +317,14 @@ TEST_F(ShardTest, sealEndsWaitingTakes) {
     blockingWait(shard->co_refresh());
   });
   auto result =
-      blockingWait(shard->co_take("s", kEpoch, 1, std::chrono::seconds(5)));
+      blockingWait(shard->co_take("s", kEpoch, 1, std::chrono::seconds(5), "", false));
   sealer.join();
   EXPECT_TRUE(result.end);
 }
 
 TEST_F(ShardTest, removedStreamIsForgotten) {
   auto shard = makeShard();
-  blockingWait(shard->co_put("s", chunk(1)));
+  blockingWait(shard->co_put("s", chunk(1), ""));
   EXPECT_TRUE(blockingWait(registry_->co_remove("s")));
   blockingWait(shard->co_refresh());
   EXPECT_THROW(blockingWait(shard->co_stats("s")), kiln::Error);
@@ -253,7 +333,7 @@ TEST_F(ShardTest, removedStreamIsForgotten) {
 TEST_F(ShardTest, refreshesOnItsOwn) {
   auto shard = std::make_shared<Shard>(
       registry_, ShardOptions{.refreshInterval = milliseconds(20)});
-  blockingWait(shard->co_put("s", chunk(1)));
+  blockingWait(shard->co_put("s", chunk(1), ""));
   blockingWait(registry_->co_seal("s"));
   auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
   while (!blockingWait(shard->co_stats("s")).sealed &&

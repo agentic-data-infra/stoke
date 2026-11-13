@@ -22,6 +22,12 @@ namespace stoke {
 // it at its shard. Ember's stoke connector writes through it, one per task,
 // and so do tests, benchmarks and Python feeds.
 //
+// Its chunks are sticky (kiln::Placement): each one's blocks stay on one
+// Kiln server where they fit, so that consumers on that host read it
+// locally; the producer puts it with that host, which shards hand out to
+// consumers there first. With StreamInfo::localWrites, the producer's own
+// host's server is tried first.
+//
 // With a StreamInfo::taskBudget of N (as of the stream's co_open), a
 // producer has at most N chunks put and not yet consumed: before writing
 // the next one it waits until a consumer acks its oldest. That is the

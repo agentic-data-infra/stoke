@@ -213,7 +213,7 @@ TEST_F(LoaderTest, restartReleasesThePreviousIncarnation) {
   }
   // A crashed incarnation leaves chunks leased and unread.
   for (uint32_t i = 0; i < kShards; ++i) {
-    blockingWait(stream_->shard(i).co_take("s", {"rank0", 3}, 10, {}));
+    blockingWait(stream_->shard(i).co_take("s", {"rank0", 3}, 10, {}, "", false));
   }
   blockingWait(registry_->co_seal("s"));
 

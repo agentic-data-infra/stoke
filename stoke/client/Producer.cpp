@@ -12,6 +12,14 @@ namespace {
 // One wait at a shard, within ShardOptions::maxWait; co_awaitBudget loops.
 constexpr std::chrono::seconds kConsumedWait{1};
 
+kiln::Placement withLocality(kiln::Placement placement, const StreamInfo& info) {
+  placement.sticky = true;
+  if (info.localWrites) {
+    placement.preferredHost = kiln::localHostName();
+  }
+  return placement;
+}
+
 } // namespace
 
 Producer::Producer(
@@ -20,7 +28,7 @@ Producer::Producer(
     kiln::Placement placement)
     : stream_{std::move(stream)},
       kiln_{std::move(kiln)},
-      placement_{placement},
+      placement_{withLocality(placement, stream_->info())},
       budget_{stream_->info().taskBudget} {}
 
 folly::coro::Task<void> Producer::co_awaitUnconsumedBelow(size_t limit) {
@@ -81,7 +89,10 @@ Producer::co_create(uint64_t sizeHint) {
 }
 
 folly::coro::Task<void> Producer::co_put(const kiln::ChunkId& chunk) {
-  co_await stream_->co_put(chunk);
+  // From the client's cache of what it committed.
+  auto info = co_await kiln_->co_stat(chunk);
+  auto host = co_await co_chunkHost(*kiln_, info);
+  co_await stream_->co_put(chunk, std::move(host));
   if (budget_ > 0) {
     std::lock_guard lock(mutex_);
     unconsumed_.push_back(chunk);

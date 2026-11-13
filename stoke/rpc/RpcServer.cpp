@@ -41,16 +41,19 @@ class ShardService
 
   folly::coro::Task<bool> co_put(
       std::unique_ptr<std::string> stream,
-      std::unique_ptr<thrift::ChunkId> chunk) override {
-    co_return co_await guarded(
-        shard_->co_put(std::move(*stream), fromThrift(*chunk)));
+      std::unique_ptr<thrift::ChunkId> chunk,
+      std::unique_ptr<std::string> host) override {
+    co_return co_await guarded(shard_->co_put(
+        std::move(*stream), fromThrift(*chunk), std::move(*host)));
   }
 
   folly::coro::Task<std::unique_ptr<thrift::TakeResult>> co_take(
       std::unique_ptr<std::string> stream,
       std::unique_ptr<thrift::Epoch> epoch,
       int32_t max,
-      int64_t waitMs) override {
+      int64_t waitMs,
+      std::unique_ptr<std::string> host,
+      bool hostOnly) override {
     if (max < 0 || waitMs < 0) {
       throw toThrift(kiln::Error(
           kiln::ErrorCode::kInvalidArgument, "Negative max or wait"));
@@ -59,7 +62,9 @@ class ShardService
         std::move(*stream),
         fromThrift(*epoch),
         static_cast<uint32_t>(max),
-        std::chrono::milliseconds(waitMs)));
+        std::chrono::milliseconds(waitMs),
+        std::move(*host),
+        hostOnly));
     co_return boxed(toThrift(result));
   }
 

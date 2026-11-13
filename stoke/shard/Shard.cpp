@@ -1,8 +1,10 @@
 #include "stoke/shard/Shard.h"
 
+#include <algorithm>
 #include <cmath>
 #include <deque>
 #include <list>
+#include <optional>
 
 #include <folly/container/F14Map.h>
 #include <folly/coro/Baton.h>
@@ -22,6 +24,10 @@ using Clock = std::chrono::steady_clock;
 // A take parked on an empty queue, until a put, a seal or its timeout.
 struct Waiter {
   Epoch epoch;
+  // The consumer's host, whose chunks it gets first, and whether only
+  // those.
+  std::string host;
+  bool hostOnly{false};
   TakeResult result;
   bool done{false};
   folly::coro::Baton baton;
@@ -53,6 +59,8 @@ struct Shard::Stream {
   };
 
   struct Chunk {
+    // Where it is stored, as put.
+    std::string host;
     bool taken{false};
     bool consumed{false};
   };
@@ -61,7 +69,9 @@ struct Shard::Stream {
   StreamInfo info;
   // Every chunk put.
   folly::F14FastMap<kiln::ChunkId, Chunk> chunks;
-  std::deque<kiln::ChunkId> queue;
+  // The chunks to hand out, by host; no empty queues.
+  folly::F14FastMap<std::string, std::deque<kiln::ChunkId>> queues;
+  size_t queued{0};
   folly::F14FastMap<kiln::ChunkId, Lease> leases;
   std::list<std::shared_ptr<Waiter>> waiters;
   // Producers waiting for chunks' acks.
@@ -79,7 +89,41 @@ struct Shard::Stream {
     }
     auto stop = static_cast<uint64_t>(
         std::ceil(info.stopFraction * static_cast<double>(stats.put)));
-    return stats.taken >= stop || (queue.empty() && leases.empty());
+    return stats.taken >= stop || (queued == 0 && leases.empty());
+  }
+
+  // Queues a chunk put, at the back of its host's queue.
+  void push(kiln::ChunkId chunk) {
+    queues[chunks[chunk].host].push_back(chunk);
+    ++queued;
+  }
+
+  // Queues a chunk released or expired, to go out next.
+  void pushFront(kiln::ChunkId chunk) {
+    queues[chunks[chunk].host].push_front(chunk);
+    ++queued;
+  }
+
+  // The next chunk for a consumer on 'host': its host's, else, unless
+  // 'hostOnly', the longest queue's.
+  std::optional<kiln::ChunkId> pop(const std::string& host, bool hostOnly) {
+    auto it = queues.find(host);
+    if (it == queues.end()) {
+      if (hostOnly || queues.empty()) {
+        return std::nullopt;
+      }
+      it = std::max_element(
+          queues.begin(), queues.end(), [](const auto& a, const auto& b) {
+            return a.second.size() < b.second.size();
+          });
+    }
+    auto chunk = it->second.front();
+    it->second.pop_front();
+    if (it->second.empty()) {
+      queues.erase(it);
+    }
+    --queued;
+    return chunk;
   }
 
   void lease(kiln::ChunkId chunk, const Epoch& epoch, Clock::duration timeout) {
@@ -104,22 +148,28 @@ struct Shard::Stream {
       waiters.clear();
       return done;
     }
-    while (!waiters.empty() && !queue.empty()) {
-      auto waiter = std::move(waiters.front());
-      waiters.pop_front();
-      auto chunk = queue.front();
-      queue.pop_front();
-      lease(chunk, waiter->epoch, timeout);
-      waiter->result.chunks.push_back(chunk);
-      waiter->done = true;
-      done.push_back(std::move(waiter));
+    // Takes whose host has chunks first, then the others, oldest first.
+    for (bool local : {true, false}) {
+      for (auto it = waiters.begin(); it != waiters.end() && queued > 0;) {
+        auto& waiter = *it;
+        auto chunk = pop(waiter->host, local || waiter->hostOnly);
+        if (!chunk) {
+          ++it;
+          continue;
+        }
+        lease(*chunk, waiter->epoch, timeout);
+        waiter->result.chunks.push_back(*chunk);
+        waiter->done = true;
+        done.push_back(std::move(waiter));
+        it = waiters.erase(it);
+      }
     }
     return done;
   }
 
   ShardStats snapshot() const {
     auto result = stats;
-    result.depth = queue.size();
+    result.depth = queued;
     result.leased = leases.size();
     result.waiters = waiters.size();
     result.sealed = info.state == StreamState::kSealed;
@@ -205,7 +255,7 @@ folly::coro::Task<void> Shard::co_refresh() {
       }
       for (auto it = stream->leases.begin(); it != stream->leases.end();) {
         if (it->second.deadline <= now) {
-          stream->queue.push_front(it->first);
+          stream->pushFront(it->first);
           ++stream->stats.expired;
           it = stream->leases.erase(it);
         } else {
@@ -218,7 +268,10 @@ folly::coro::Task<void> Shard::co_refresh() {
   }
 }
 
-folly::coro::Task<bool> Shard::co_put(std::string stream, kiln::ChunkId chunk) {
+folly::coro::Task<bool> Shard::co_put(
+    std::string stream,
+    kiln::ChunkId chunk,
+    std::string host) {
   auto state = co_await co_stream(stream);
   Waiters done;
   {
@@ -226,12 +279,13 @@ folly::coro::Task<bool> Shard::co_put(std::string stream, kiln::ChunkId chunk) {
     if (state->removed) {
       throw kiln::Error(kiln::ErrorCode::kNotFound, "no stream " + stream);
     }
-    if (!state->chunks.emplace(chunk, Stream::Chunk{}).second) {
+    if (!state->chunks.emplace(chunk, Stream::Chunk{.host = std::move(host)})
+             .second) {
       ++state->stats.duplicates;
       co_return false;
     }
     ++state->stats.put;
-    state->queue.push_back(chunk);
+    state->push(chunk);
     done = state->dispatch(options_.leaseTimeout);
   }
   wake(done);
@@ -242,7 +296,9 @@ folly::coro::Task<TakeResult> Shard::co_take(
     std::string stream,
     Epoch epoch,
     uint32_t max,
-    std::chrono::milliseconds wait) {
+    std::chrono::milliseconds wait,
+    std::string host,
+    bool hostOnly) {
   if (max == 0 || max > options_.maxTake) {
     throw kiln::Error(
         kiln::ErrorCode::kInvalidArgument,
@@ -263,16 +319,20 @@ folly::coro::Task<TakeResult> Shard::co_take(
       result.end = true;
       co_return result;
     }
-    while (result.chunks.size() < max && !state->queue.empty()) {
-      auto chunk = state->queue.front();
-      state->queue.pop_front();
-      state->lease(chunk, epoch, options_.leaseTimeout);
-      result.chunks.push_back(chunk);
+    while (result.chunks.size() < max) {
+      auto chunk = state->pop(host, hostOnly);
+      if (!chunk) {
+        break;
+      }
+      state->lease(*chunk, epoch, options_.leaseTimeout);
+      result.chunks.push_back(*chunk);
     }
     if (!result.chunks.empty() || wait.count() == 0) {
       co_return result;
     }
     waiter->epoch = std::move(epoch);
+    waiter->host = std::move(host);
+    waiter->hostOnly = hostOnly;
     state->waiters.push_back(waiter);
   }
   // Ends the wait unless a put or a seal did first. Holds only the stream
@@ -385,7 +445,7 @@ folly::coro::Task<uint64_t> Shard::co_release(std::string stream, Epoch epoch) {
     std::lock_guard lock(state->mutex);
     for (auto it = state->leases.begin(); it != state->leases.end();) {
       if (it->second.epoch == epoch) {
-        state->queue.push_front(it->first);
+        state->pushFront(it->first);
         ++released;
         it = state->leases.erase(it);
       } else {
