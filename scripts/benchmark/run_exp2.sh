@@ -15,11 +15,15 @@
 # lowest probe fails). Each of those runs lasts about SECONDS_PER_RUN (fewer steps if the
 # data ends first). Results (JSON lines, logs, versions) go to OUT_DIR.
 #
+# With KIND=1 (Experiment 2b), every run is one of kind/exp2b.py: the same, on the kind cluster's four
+# nodes, one trainer each, with the budget split evenly over them (DATA_DIR then is under ~/data).
+#
 # Usage: run_exp2.sh OUT_DIR [DATA_DIR] (default ~/data/dlbench-exp2)
 # Environment: LOADERS ("grain zephon stoke"), BUDGETS ("4 8 12"),
 # FACTORS ("1"), REPS (3), MAX_STEPS (1000), LOW (0.25), HIGH (2), PROBES (5),
 # SECONDS_PER_RUN (15), MEMORY_MAX (24G), PYTHON (python3: the benchmark's
-# venv); for stoke EMBER_HOME and STOKE_BUILD (as in run_exp1.sh).
+# venv); for stoke EMBER_HOME and STOKE_BUILD (as in run_exp1.sh); with KIND, IMAGE (dlbench:6829197,
+# kind/build_image.sh) instead.
 
 set -euo pipefail
 
@@ -33,7 +37,10 @@ mkdir -p "$out"
 {
   date -u
   echo "stoke $(git -C "$here" rev-parse HEAD) $(git -C "$here" status --porcelain | wc -l) changed"
-  if [[ $loaders == *stoke* ]]; then
+  if [[ -n ${KIND:-} ]]; then
+    docker run --rm "${IMAGE:-dlbench:6829197}" cat /opt/ember/BUILD_INFO
+    kubectl get nodes -o wide
+  elif [[ $loaders == *stoke* ]]; then
     cat "$STOKE_BUILD/BUILD_INFO"
   fi
   "$python" -V
@@ -58,10 +65,17 @@ cpus() {  # the first $1 / 2 cores, both hyperthreads of each
 
 run() {  # loader budget factor name step_ms steps; prints the JSON line
   local stoke=()
-  if [[ $1 == stoke ]]; then
+  if [[ $1 == stoke && -z ${KIND:-} ]]; then
     stoke=(--ember_home="$EMBER_HOME" --build="$STOKE_BUILD" --feed_log="$out/$4.feed.log")
   fi
   cat "$data"/*.parquet >/dev/null  # warm the page cache
+  if [[ -n ${KIND:-} ]]; then
+    "$python" "$here/kind/exp2b.py" "$1" "$data" --budget="$2" --dop=$(($3 * $2)) --step_ms="$5" --steps="$6" \
+      --image="${IMAGE:-dlbench:6829197}" --out="$out/results.jsonl" --log_dir="$out/$4.nodes" >"$out/$4.log" 2>&1 ||
+      echo "failed, see $out/$4.log" >&2
+    grep '^{' "$out/$4.log" | tail -1
+    return
+  fi
   systemd-run --user --scope -p MemoryMax="${MEMORY_MAX:-24G}" -q \
     "$python" "$here/exp2.py" "$1" "$data" --dop=$(($3 * $2)) --cpus="$(cpus "$2")" \
     --step_ms="$5" --steps="$6" "${stoke[@]}" --out="$out/results.jsonl" >"$out/$4.log" 2>&1 ||

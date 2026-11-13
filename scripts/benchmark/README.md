@@ -113,3 +113,38 @@ unthrottled to get the slowest one's rate R, then bisects between 0.25 R
 and 2 R for the fastest rate every trainer sustains. `summarize_exp2.py
 OUT_DIR` makes the table (median and range over the reps). stoke needs
 an Ember build with stream packing (ember#86).
+
+## Experiment 2b: four nodes
+
+The same runs on a kind cluster on one machine (four worker nodes, the
+`ember` cluster of Ember's `deploy/kind`, with `~/data` mounted read-only
+at `/hostdata` and `~/data/dlbench-kind` at `/dlbench` in every node), one
+trainer per node. `kind/exp2b.py` runs one such run: a pod per node
+(`kind/exp2b_node.py`) runs that node's trainer and its share of the
+loader, all on the node's network:
+
+- Grain and Zephon: the trainer's own pipeline, as in Experiment 2.
+- stoke: on every node a Kiln DRAM server, a stoke shard and an Ember
+  worker; on node 0 also Kiln's metadata server and the Ember feed's
+  driver. The stream has the four shards; Ember's tasks run on all four
+  workers and write chunks into their node's Kiln, and the loaders read
+  them from any node over TCP (and from their own node's DRAM regions
+  directly, as Kiln does on one host).
+
+The budget and the knob are split evenly over the nodes: node i holds
+cores 2i and 2i+1 (CPUs 2i, 2i+8, 2i+1, 2i+9), its share of a budget of C
+CPUs is the first C/4 of 2i, 2i+8 and 2i+1, and its trainer runs on 2i+9.
+Each node's container is held to those CPUs, each pod to 6 GiB (24 GiB in
+all, as Experiment 2) and pinned as in Experiment 2. CPU is the sum of the
+pods' cgroups, peak memory the sum of the pods' peaks. Kiln gets, per
+node, what its Ember worker's tasks may hold unconsumed plus 1 GiB. Each
+run also reports how much it read from the data's disk: the data must fit
+in the page cache.
+
+```
+kind/build_image.sh $EMBER_HOME     # dlbench:<commit>, loaded into the cluster
+KIND=1 IMAGE=dlbench:<commit> PYTHON=$VENV/bin/python ./run_exp2.sh OUT_DIR ~/data/DATA_DIR
+```
+
+Nothing else may run in the cluster's `ember` namespace (the pods use the
+nodes' ports 7077-7078 and 7570-7590).
