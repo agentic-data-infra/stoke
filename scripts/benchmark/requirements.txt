@@ -1,0 +1,8 @@
+# The benchmark's venv (Python 3.12): the loaders compared, data prep, and
+# pybind11 for building stoke's Python module against this Python.
+grain==0.2.18
+zephon==0.2.1
+pyarrow==26.0.1
+numpy==2.5.4
+tokenizers==0.23.3
+pybind11==3.1.0
