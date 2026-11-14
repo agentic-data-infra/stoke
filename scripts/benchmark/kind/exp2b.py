@@ -85,7 +85,8 @@ def pod(name, node, image, memory, command):
                 "name": "node",
                 "image": image,
                 "command": command,
-                "env": [{"name": "PYTHONPATH", "value": "/dlbench/harness"}],
+                "env": [{"name": "PYTHONPATH", "value": "/dlbench/harness"},
+                        {"name": "EMBER_CONF", "value": os.environ.get("EMBER_CONF", "")}],
                 "resources": {"limits": {"memory": memory}},
                 "volumeMounts": [
                     {"name": "data", "mountPath": "/hostdata", "readOnly": True},

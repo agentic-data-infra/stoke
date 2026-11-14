@@ -113,7 +113,7 @@ class Node:
             )
             env = dict(
                 os.environ, PYTHONPATH=os.path.join(a.build, "python"),
-                EMBER_CONF=f"ember.cluster.workers={len(a.hosts)}",
+                EMBER_CONF=f"ember.cluster.workers={len(a.hosts)} {os.environ.get('EMBER_CONF', '')}".strip(),
             )
             feed = self.start("feed", [
                 "python3", os.path.join(os.path.dirname(exp2.__file__), "feed_exp2.py"), a.data_dir, STREAM,
