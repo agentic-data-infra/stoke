@@ -24,6 +24,7 @@
 # SECONDS_PER_RUN (15), MEMORY_MAX (24G), PYTHON (python3: the benchmark's
 # venv); for stoke EMBER_HOME and STOKE_BUILD (as in run_exp1.sh); with KIND, IMAGE (dlbench:6829197,
 # kind/build_image.sh) instead, and LOCAL_WRITES=1 for stoke streams with local writes.
+# EMBER_CONF ("k=v k=v ...") adds Session config to stoke's Ember feed, also on kind.
 
 set -euo pipefail
 
