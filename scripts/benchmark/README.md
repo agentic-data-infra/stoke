@@ -93,6 +93,10 @@ the same work (`exp2_common.py`):
 
 Every loader buffers 64 batches per trainer (stoke's loader default), and
 no loader shuffles single documents (see `exp2.py`).
+stoke's feed shuffles each file's ranges (`ember.files.shuffle=file`, seed
+0). With Ember's default splits (here one per file) that only orders the
+files by path; set `ember.files.max_split_bytes` smaller through
+`EMBER_CONF` for a finer order, at a throughput cost.
 
 Each trainer is a process of its own that takes a batch, then sleeps for
 a fixed step time, and measures how much of the time it waits for data.

@@ -6,7 +6,8 @@ The stream is sealed when the job commits.
 
     python feed_exp2.py DATA_DIR STREAM --metadata HOST:PORT [--master local[N]]
 
-More Session configuration comes from EMBER_CONF="k=v k=v ...". Needs Ember's Python module built with stoke (-c ember.stoke=true) on
+Its scan shuffles each file's ranges (ember.files.shuffle=file, seed 0). More
+Session configuration, which overrides that, comes from EMBER_CONF="k=v k=v ...". Needs Ember's Python module built with stoke (-c ember.stoke=true) on
 PYTHONPATH.
 """
 
@@ -33,6 +34,8 @@ def main():
         .master(args.master)
         .config("ember.kiln.metadata", args.metadata)
         .config("ember.stoke.chunk_bytes", str(args.chunk_mb << 20))
+        .config("ember.files.shuffle", "file")
+        .config("ember.files.shuffle_seed", "0")
     )
     for kv in os.environ.get("EMBER_CONF", "").split():
         builder = builder.config(*kv.split("=", 1))
