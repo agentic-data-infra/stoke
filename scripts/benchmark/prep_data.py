@@ -8,8 +8,8 @@ tokenizers), joins the documents in input order with <|endoftext|> after
 each, and cuts the token stream into sequences of --seq_len tokens (the
 tail of each input row group is dropped). Each output row is one batch:
 --batch consecutive sequences, flattened into one list<int32> column
-"tokens" (reshape to [batch, seq_len]; for stoke, stoke_pack(tokens, 32,
-4096)). Files hold --rows_per_file rows, plain (uncompressed, no
+"tokens" (reshape to [batch, seq_len]; for stoke, write.stream(...,
+batch=32, sequence=4096)). Files hold --rows_per_file rows, plain (uncompressed, no
 dictionary), in row groups of --row_group_rows. It stops after --target_gb
 of tokens.
 

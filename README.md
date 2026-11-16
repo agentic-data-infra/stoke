@@ -205,11 +205,13 @@ enough.
 stream, and runs at the same time:
 
 - the feed (`feed.py`), an Ember job over FineWeb-Edu:
-  `read.parquet → filter(int_score >= 4) → stoke_pack(stoke_tokenize(text), B, T)
-  → write.stream("fineweb")`. `stoke_tokenize` makes byte tokens
-  (vocabulary 257); `stoke_pack` makes one int32 `[b ≤ B, T + 1]` batch per
-  document. Each scan task puts a chunk into the stream every 4 MiB of
-  batches (`--chunk_mb`), while the job runs;
+  `read.parquet → filter(int_score >= 4) → select(text)
+  → write.stream("fineweb", batch=B, sequence=T)`. Ember's stoke connector
+  tokenizes each document by bytes (vocabulary 257) and packs each scan
+  task's tokens into int32 `[B, T + 1]` batches with stoke's `Packer`
+  (`stoke/format/Packer.h`), windows running across documents. Each scan
+  task puts a chunk into the stream every 4 MiB of batches (`--chunk_mb`),
+  while the job runs;
 - the trainer (`train.py`), a small GPT under `torchrun` (CPU, gloo), each
   rank reading its batches with `StokeDataset`.
 
