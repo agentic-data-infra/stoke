@@ -27,8 +27,10 @@ the producers, Kiln and the trainers.
 Status: v1. There are shard servers, the `stoke` CLI, the batch format,
 the dataloader (C++, with a PyTorch `IterableDataset`), a benchmark, and
 an end-to-end example where an Ember job feeds a nanoGPT-style trainer.
-Ember writes streams with `Dataframe.write.stream` (in Ember, built with
-`-c ember.stoke=true`).
+Ember writes streams through its stoke connector (in Ember, built with
+`-c ember.stoke=true`): `df.write.format("stoke").option("seal", True).save(stream)`,
+with the options `batch` and `sequence` to pack a column of tokens or text
+into batches, and `chunk_bytes`.
 
 ## Streams
 
@@ -206,8 +208,8 @@ stream, and runs at the same time:
 
 - the feed (`feed.py`), an Ember job over FineWeb-Edu:
   `read.parquet → filter(int_score >= 4) → select(text)
-  → write.stream("fineweb", batch=B, sequence=T)`. Ember's stoke connector
-  tokenizes each document by bytes (vocabulary 257) and packs each scan
+  → write.format("stoke").option("batch", B).option("sequence", T).save("fineweb")`.
+  Ember's stoke connector tokenizes each document by bytes (vocabulary 257) and packs each scan
   task's tokens into int32 `[B, T + 1]` batches with stoke's `Packer`
   (`stoke/format/Packer.h`), windows running across documents. Each scan
   task puts a chunk into the stream every 4 MiB of batches (`--chunk_mb`),

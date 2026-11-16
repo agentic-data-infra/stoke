@@ -1,6 +1,6 @@
 """The Ember job that feeds stoke in Experiment 1: each row of the
 pre-batched files (32 x 4097 tokens) becomes one int32 [32, 4097] batch,
-packed by Ember's stoke connector (write.stream with batch=32,
+packed by Ember's stoke connector (write.format("stoke") with batch=32,
 sequence=4096) and written into a stoke stream, which is sealed when the
 job commits.
 
@@ -29,14 +29,18 @@ def main():
         Session.builder.appName("dlbench-feed")
         .master(args.master)
         .config("ember.kiln.metadata", args.metadata)
-        .config("ember.stoke.chunk_bytes", str(args.chunk_mb << 20))
         .getOrCreate()
     )
     start = time.time()
     batches = (
         ember.read.parquet(args.data_dir)
         .select("tokens")
-        .write.stream(args.stream, seal=True, batch=32, sequence=4096)
+        .write.format("stoke")
+        .option("batch", 32)
+        .option("sequence", 4096)
+        .option("seal", True)
+        .option("chunk_bytes", args.chunk_mb << 20)
+        .save(args.stream)
     )
     print(f"feed: {batches} rows into {args.stream} in {time.time() - start:.1f} s", flush=True)
     ember.stop()
