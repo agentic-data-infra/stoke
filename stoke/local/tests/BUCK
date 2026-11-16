@@ -1,0 +1,13 @@
+cxx_test(
+    name = "local_test",
+    srcs = glob(["*.cpp"]),
+    deps = [
+        "//stoke/client:producer",
+        "//stoke/local:local",
+        "//stoke/loader:loader",
+        "//stoke/tests:test_main",
+        "kiln//kiln/client:client",
+    ],
+    # Archives must precede the prebuilt libraries they use.
+    link_ordering = "topological",
+)

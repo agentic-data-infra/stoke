@@ -1,0 +1,16 @@
+# Kiln and a stoke shard in this process: stoke.LocalStream, and tests.
+
+cxx_library(
+    name = "local",
+    srcs = ["LocalCluster.cpp"],
+    header_namespace = "stoke/local",
+    exported_headers = ["LocalCluster.h"],
+    exported_deps = ["kiln//kiln/local:local"],
+    deps = [
+        "//stoke/client:registry",
+        "//stoke/rpc:rpc",
+        "//stoke/shard:shard",
+        "kiln//kiln/client:client",
+    ],
+    visibility = ["PUBLIC"],
+)
