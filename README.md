@@ -154,10 +154,13 @@ that are not Ember jobs; `stoke.create_stream`, `seal_stream` and
 uv venv --python 3.10 .venv
 uv pip install --python .venv/bin/python pybind11 numpy pytest
 uv pip install --python .venv/bin/python torch --index-url https://download.pytorch.org/whl/cpu
-scripts/gen_third_party.sh   # again, for the Python flags
+scripts/gen_third_party.sh   # again, for the Python flags and the module's own gflags
 buck2 build //python:_stoke --out python/stoke/_stoke.so
 (cd python && PYTHONPATH=. ../.venv/bin/python -m pytest tests)
 ```
+
+`scripts/build_wheel.sh` builds a manylinux wheel into `dist/`; install it
+next to Ember's wheel: `pip install ember-*.whl dist/stoke-*.whl`.
 
 ## Benchmark
 

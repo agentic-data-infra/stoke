@@ -3,8 +3,9 @@
 # folly, fbthrift and gtest stoke builds against, and
 # third-party/generated/python.bzl with the include flags of Python and
 # pybind11 for the Python module (python/), from $PYTHON (default
-# .venv/bin/python; without it the module is not built). Re-run after
-# reinstalling folly or fbthrift.
+# .venv/bin/python; without it the module is not built). With Python, also
+# builds the module's own gflags (scripts/build_gflags_pic.sh) if missing.
+# Re-run after reinstalling folly or fbthrift.
 #
 # Usage: [PYTHON=...] scripts/gen_third_party.sh [--prefix DIR]
 #        (default /opt/deps-gcc12)
@@ -26,6 +27,9 @@ if [[ -x "$python" ]]; then
 import json, sysconfig, pybind11
 paths = [sysconfig.get_paths()["include"], pybind11.get_include()]
 print(json.dumps([f for p in paths for f in ("-isystem", p)]))')
+  if [[ ! -e /opt/deps-gcc12/gflags-pic/lib/libgflags.a ]]; then
+    "$root/scripts/build_gflags_pic.sh"
+  fi
 fi
 mkdir -p "$root/third-party/generated"
 cat > "$root/third-party/generated/python.bzl" <<EOF2
