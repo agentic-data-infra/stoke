@@ -108,6 +108,11 @@ into aligned memory can be used in place. Batches in a chunk may differ in
 shape. See [stoke/format/Batch.h](stoke/format/Batch.h), which has no
 dependencies, for producers outside stoke.
 
+[stoke/format/Packer.h](stoke/format/Packer.h) packs tokens into such
+batches for language model training: int32 `[b, T + 1]` windows (inputs and
+shifted targets of T tokens each), filled across documents without padding,
+with text tokenized by bytes (0 to 255, then the end-of-text token 256).
+
 ## Dataloader
 
 Each rank runs a loader ([stoke/loader/Loader.h](stoke/loader/Loader.h)).

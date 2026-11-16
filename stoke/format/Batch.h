@@ -1,6 +1,6 @@
 // The batch format: how producers lay out training batches in Kiln chunks
 // and the dataloader finds them again. Standard C++ only, so that any
-// producer (e.g. Ember's stoke_pack function) can use it.
+// producer (e.g. Ember's stoke connector) can use it.
 //
 // A chunk is a sequence of frames, each a little-endian u64 length and that
 // many bytes of one batch:
