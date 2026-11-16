@@ -4,151 +4,59 @@ A distributed PyTorch dataloader for data preprocessed by
 [Ember](https://github.com/agentic-data-infra/ember). You write
 preprocessing as an Ember Dataframe pipeline, and stoke feeds its output to
 the trainers while the pipeline runs.
-[docs/comparison.md](docs/comparison.md) compares stoke with other data
-loaders for training.
 
-Producers (e.g. the workers running an
-[Ember](https://github.com/agentic-data-infra/ember) job's tasks) write
-batches of training data into chunks of
-[Kiln](https://github.com/agentic-data-infra/kiln), and trainers read them,
-at the same time. stoke is the queue between them: its messages are just
-chunk ids (16 bytes), and the bytes of the batches only ever move between
-the producers, Kiln and the trainers.
+## Overview
+
+Producers (the workers running an Ember job's tasks) write batches of
+training data into chunks of [Kiln](https://github.com/agentic-data-infra/kiln),
+and trainers read them, at the same time. stoke is the queue between them:
+its messages are just chunk ids (16 bytes), and the bytes of the batches
+only ever move between the producers, Kiln and the trainers.
 
 - **One unordered queue per stream, sharded.** Any consumer gets any
   available chunk, from any shard. A chunk goes to shard
   `hash(chunk id) mod S`, so retried producer tasks, which write the same
   bytes and hence the same chunk id, reach the same shard, and it drops the
   duplicates.
+- **Backpressure.** With a stream's task budget, each producer task waits
+  once it has that many chunks not yet consumed, so the pipeline runs at
+  the trainers' pace.
 - **Decoupled.** Producers only know a stream name; trainers only know the
   stoke dataloader.
-- **Kiln is the data plane.** Consumers read a chunk with one Kiln read.
-  stoke adds one Kiln ref per stream and no other load on Kiln's metadata
-  server.
+- **Kiln is the data plane.** Consumers read a chunk with one Kiln read,
+  from their own host's Kiln server where they can. stoke adds one Kiln ref
+  per stream and no other load on Kiln's metadata server.
 
 Status: v1. There are shard servers, the `stoke` CLI, the batch format,
-the dataloader (C++, with a PyTorch `IterableDataset`), a benchmark, and
-an end-to-end example where an Ember job feeds a nanoGPT-style trainer.
-Ember writes streams through its stoke connector (in Ember, built with
-`-c ember.stoke=true`): `df.write.format("stoke").option("seal", True).save(stream)`,
-with the options `batch` and `sequence` to pack a column of tokens or text
-into batches, and `chunk_bytes`.
+the dataloader (C++, with a PyTorch `IterableDataset`), a local mode that
+runs everything in the trainer's process, Python wheels, a benchmark, and
+an example where an Ember job feeds a nanoGPT-style trainer. Ember writes
+streams through its stoke connector:
+`df.write.format("stoke").option("batch", B).option("sequence", T).save(stream)`
+packs a column of text or tokens into int32 `[B, T + 1]` batches.
 
-## Streams
+- [docs/design.md](docs/design.md): streams, shards, locality, the batch
+  format and the dataloader.
+- [docs/benchmark.md](docs/benchmark.md): throughput and backpressure.
+- [docs/comparison.md](docs/comparison.md): stoke and other data loaders
+  for training.
 
-A stream's registry entry is the Kiln ref `stream/<name>`, whose value is
-JSON: the Kiln bucket of its chunks, its shards' endpoints, its state
-(`open` or `sealed`) and the fraction of chunks after which shards end a
-sealed stream (`stopFraction`, so that ranks stop together), and the
-chunks each producer may have put and not yet seen consumed (`taskBudget`,
-`stoke create --task_budget`; 0 for no limit), and whether producers write
-chunks to their own host's Kiln server first (`localWrites`,
-`stoke create --local_writes`; see Locality). See
-[stoke/common/Stream.h](stoke/common/Stream.h).
+## Building
 
-## Shards
-
-A shard server (`stoke_shard`) keeps, for each stream that lists it, the
-chunk ids put there, in DRAM ([stoke/shard/Shard.h](stoke/shard/Shard.h);
-the API is [stoke/rpc/ShardRpc.h](stoke/rpc/ShardRpc.h), over fbthrift):
-
-- `co_put(stream, chunk, host)` queues a chunk with the host it is stored
-  on, or hands it straight to a waiting take (one on that host first); a
-  chunk the shard already has is dropped.
-- `co_take(stream, epoch, max, wait, host, hostOnly)` returns up to `max`
-  chunks, leased to the consumer's epoch (job, incarnation): those stored
-  on the consumer's `host` first, then, unless `hostOnly`, those of the
-  host with the most queued. On an empty queue it parks for up to `wait`,
-  so consumers never poll.
-- `co_ack(stream, epoch, chunks)` ends leases; `co_release(stream, epoch)`
-  queues all of an epoch's leased chunks again, for a restarted consumer.
-  Leases not acked within `--lease_timeout_s` are queued again too.
-- `co_awaitConsumed(stream, chunk, wait)` says whether a chunk was acked,
-  parking for up to `wait` until it is. A producer
-  ([stoke/client/Producer.h](stoke/client/Producer.h), one per Ember task)
-  with `taskBudget` chunks put and not yet acked waits on its oldest before
-  writing the next: that is the stream's backpressure, and the writer just
-  sees its put take longer.
-- Once a stream is sealed, a shard ends it (`take` returns `end`) when it
-  handed out `stopFraction` of its chunks, or all of them.
-- `co_stats(stream)`: depth, leased, waiting takes, chunks put, taken and
-  acked. Summed over the shards, depth is the backlog and waiters says
-  whether consumers starve.
-
-Shards learn streams from the registry on first use and re-read their
-entries every second, to see seals and removals. A producer puts each
-chunk at shard `shardOf(id)`; a consumer takes from shards at random
-([stoke/client/StreamClient.h](stoke/client/StreamClient.h)).
+stoke builds with [Buck2](https://buck2.build), like Kiln and Ember, with
+GCC 12 against the folly and fbthrift in `/opt/deps-gcc12` (see Kiln's
+[Building](https://github.com/agentic-data-infra/kiln#building)). Kiln is a
+git submodule and the Buck cell `kiln//`; stoke uses its dependency setup.
 
 ```
-third-party/kiln/scripts/start_local_cluster.sh -d 1 -l 0 -r 4   # prints localhost:7470
-buck2 run //bin:stoke_shard -- --port=7480 &
-buck2 run //bin:stoke_shard -- --port=7481 &
-buck2 run //bin:stoke -- create demo --shards=localhost:7480,localhost:7481
-buck2 run //bin:stoke -- stats demo
-buck2 run //bin:stoke -- seal demo
-buck2 run //bin:stoke -- rm demo
+git submodule update --init
+scripts/gen_third_party.sh
+buck2 build //...
+buck2 test //...
 ```
 
-
-### Locality
-
-Producers write each chunk sticky (Kiln's `Placement::sticky`): its blocks
-stay on one Kiln server, picked round robin, and the producer puts the
-chunk with that server's host. Shards queue chunks per host, and loaders
-take their own host's chunks first, so that most reads are local (Kiln's
-shared-memory path) without leaving any host's chunks behind: a loader
-with no local chunk takes another host's rather than wait. With a stream's
-`localWrites`, producers also ask for their own host's Kiln server first
-(`Placement::preferredHost`), so that writes stay local too; for
-deployments with a Kiln server on the producers' hosts (a full server, or
-a host without one, falls back to round robin).
-## Batch format
-
-A chunk holds framed batches: `[u64 length][batch]...`, where a batch is a
-64-byte header (dtype, up to 6 dims of shape, payload length) followed by
-the tensor's elements, padded to 8 bytes so that tensors in a chunk read
-into aligned memory can be used in place. Batches in a chunk may differ in
-shape. See [stoke/format/Batch.h](stoke/format/Batch.h), which has no
-dependencies, for producers outside stoke.
-
-[stoke/format/Packer.h](stoke/format/Packer.h) packs tokens into such
-batches for language model training: int32 `[b, T + 1]` windows (inputs and
-shifted targets of T tokens each), filled across documents without padding,
-with text tokenized by bytes (0 to 255, then the end-of-text token 256).
-
-## Dataloader
-
-Each rank runs a loader ([stoke/loader/Loader.h](stoke/loader/Loader.h)).
-Its fetcher threads keep a buffer of batches filled: while fewer than
-`minBufferedBatches` (64) are buffered, and, with `maxBufferedBatches`,
-while the buffer plus the batches expected from the takes in flight stay
-under that maximum (it may be passed by part of a chunk), a fetcher asks
-every shard for chunks stored on its own host, then takes any chunk from a
-random shard, tries a second one if that was empty, and then waits at a
-third (100 ms by default); it reads the whole chunk from Kiln,
-splits it into batches, removes the chunk from Kiln and acks it. `next()`
-hands out batches that point into the chunk's memory; once every shard has
-ended the stream it returns the end. A restarted rank (a higher
-incarnation) first returns the chunks leased to its previous incarnation;
-chunks read but not trained on before a crash are lost (at most once).
-
-In Python (`python/stoke`), batches are tensors without copies:
-
-```python
-import stoke, torch
-
-dataset = stoke.StokeDataset("demo", job=f"run1-rank{rank}", metadata="localhost:7470")
-for batch in torch.utils.data.DataLoader(dataset, batch_size=None):
-    ...  # e.g. an int32 [B, T+1] tensor as the producer packed it
-print(dataset.stats())  # batches, chunks, wait_seconds (starving), ...
-```
-
-Ranks reach the end at about the same time, not at the same step: stop
-them together with `stoke.all_ranks_have_data(has_batch)` every step (an
-`all_reduce(MIN)`). `stoke.Producer` puts chunks of NumPy arrays, for feeds
-that are not Ember jobs; `stoke.create_stream`, `seal_stream` and
-`remove_stream` do what the CLI does.
+The Python module (`python/stoke`) needs a Python 3.10 `.venv` with
+pybind11, and torch for the tests:
 
 ```
 uv venv --python 3.10 .venv
@@ -159,95 +67,118 @@ buck2 build //python:_stoke --out python/stoke/_stoke.so
 (cd python && PYTHONPATH=. ../.venv/bin/python -m pytest tests)
 ```
 
-`scripts/build_wheel.sh` builds a manylinux wheel into `dist/`; install it
-next to Ember's wheel: `pip install ember-*.whl dist/stoke-*.whl`.
+`scripts/build_wheel.sh` builds a wheel for Linux x86-64 (glibc 2.35 or
+newer) and CPython 3.10 into `dist/`, with the shared libraries the module
+links bundled in. Ember's `scripts/build_wheel.sh` builds its wheel the
+same way.
 
-## Benchmark
+## Running locally
 
-`examples/bench` runs synthetic producers and consumers (one dataloader
-each) against shards and Kiln in one process, over TCP, and prints for 1,
-2, 4 and 8 consumers: chunks/s and GB/s, mean take time, the share of
-empty takes, and how much of the time consumers starved. `--step_us`
-simulates a training step per batch, `--produce_rate` limits producers.
-
-```
-buck2 run //examples/bench:stoke_bench -- --step_us=2000
-```
-
-On velox-dev (16 vCPUs, 4 shards, 4 producers, 500 chunks of 4 MiB with 4
-batches each, a 2 ms step per batch):
-
-| consumers | chunks/s | GB/s | take ms | empty takes | starved (mean) |
-|---:|---:|---:|---:|---:|---:|
-| 1 | 118 | 0.50 | 0.23 | 3% | 0.6% |
-| 2 | 236 | 0.99 | 0.23 | 10% | 0.4% |
-| 4 | 468 | 1.96 | 1.5 | 38% | 1.0% |
-| 8 | 648 | 2.72 | 7.3 | 67% | 31% |
-
-Consumers scale linearly until the producers (about 700 chunks/s here)
-can no longer keep up; then they wait parked at shards, not polling. Kiln
-stores chunks in whole 1 MiB blocks and reuses the blocks of removed
-chunks only after its grace period (30 s by default), so DRAM needs room
-for that much throughput beyond the backlog; the benchmark uses 1 s.
-
-`--task_budget` bounds each producer (a Producer per producer thread, as
-per Ember task) to that many chunks put and not yet consumed, and the
-benchmark prints the most chunks the stream held unconsumed and how long
-producers waited. With producers far faster than 2 consumers (300 chunks
-of 1 MiB, 4 batches each, a 5 ms step, `--max_buffered_batches=16`):
-
-| task budget | chunks/s | most unconsumed | producers waited | starved (mean) |
-|---:|---:|---:|---:|---:|
-| none | 98 | 286 | 0% | 0.7% |
-| 2 | 95 | 8 | 91% | 2.8% |
-| 4 | 97 | 16 | 90% | 0.7% |
-
-The stream never holds more than producers × budget chunks, at the
-consumers' pace; a budget of 2 is too small to keep 2 consumers fed, 4 is
-enough.
-
-## Example: Ember feeds nanoGPT
-
-`examples/nanogpt/run.sh` starts a Kiln cluster and two shards, creates a
-stream, and runs at the same time:
-
-- the feed (`feed.py`), an Ember job over FineWeb-Edu:
-  `read.parquet → filter(int_score >= 4) → select(text)
-  → write.format("stoke").option("batch", B).option("sequence", T).save("fineweb")`.
-  Ember's stoke connector tokenizes each document by bytes (vocabulary 257) and packs each scan
-  task's tokens into int32 `[B, T + 1]` batches with stoke's `Packer`
-  (`stoke/format/Packer.h`), windows running across documents. Each scan
-  task puts a chunk into the stream every 4 MiB of batches (`--chunk_mb`),
-  while the job runs;
-- the trainer (`train.py`), a small GPT under `torchrun` (CPU, gloo), each
-  rank reading its batches with `StokeDataset`.
-
-The stream has a task budget (`TASK_BUDGET`, 4): each feed task waits
-once it has 4 chunks not yet consumed, so the feed runs at the trainer's
-pace. The feed seals the stream when its job commits; the ranks stop together
-when it ends (or after `MAX_STEPS`) and print how long each waited for
-data.
+Install Ember's and stoke's wheels (torch is not pinned, so a CPU build
+installed first stays):
 
 ```
-# Ember's Python module, with stoke:
-(cd ~/source/ember && buck2 build -c ember.stoke=true //python:_ember --out python/ember/_ember.so)
-buck2 build //python:_stoke --out python/stoke/_stoke.so
-examples/nanogpt/run.sh                     # RANKS=4 MAX_STEPS=1000 ...
+pip install torch --index-url https://download.pytorch.org/whl/cpu
+pip install ember-0.1.0-*.whl stoke-0.1.0-*.whl
 ```
 
-## Building
+`stoke.LocalStream` runs a stream on this machine with nothing to start
+beforehand: Kiln (one DRAM server holding `memory`) and a shard run in the
+trainer's process, and `feed()` runs the Ember job on a thread of it.
 
-stoke builds with [Buck2](https://buck2.build), like Kiln and Ember, with
-GCC 12 against the folly and fbthrift Velox's setup scripts build into
-`/opt/deps-gcc12` (see Kiln's `scripts/build_deps_gcc12.sh`). Kiln is a git
-submodule and the Buck cell `kiln//`; stoke uses its dependency setup.
+```python
+import stoke
+from ember import Session
+from ember.functions import col, length
+
+ember = Session.builder.appName("local").master("local[4]").getOrCreate()
+docs = (
+    ember.read.parquet("fineweb-edu/")
+    .filter((col("int_score") >= 4) & (col("language") == "en"))
+    .filter(length(col("text")) > 200)
+    .select("text")
+)
+with stoke.LocalStream("fineweb", task_budget=4, memory="1g") as stream:
+    stream.feed(docs.write.format("stoke").option("batch", 16).option("sequence", 128))
+    dataset = stream.dataset()
+    for batch in dataset:          # int32 [16, 129] tensors
+        ...                        # a training step
+    print(dataset.stats())
+```
+
+The loop ends when the job is done; a failed job ends it and raises the
+job's error. Leaving the `with` early (e.g. after a number of steps) ends
+the job. `examples/local/train.py` is this program with a small
+Transformer:
 
 ```
-git submodule update --init
-scripts/gen_third_party.sh
-buck2 build //...
-buck2 test //...
+python examples/local/train.py path/to/fineweb-edu/parquet --max_steps 1000
 ```
+
+## Running on a cluster
+
+On a cluster, Kiln, the shards, the Ember job and the trainers run as
+separate processes, on any hosts.
+
+1. **Kiln.** Start a metadata server (`kiln_meta`) and a storage server
+   (`kiln_server --metadata=...`) on each host that runs producers or
+   trainers; see [Kiln's README](https://github.com/agentic-data-infra/kiln).
+   Removed chunks' blocks are reused after Kiln's grace period
+   (`kiln_meta --grace_period_s`, 30 s), so DRAM needs room for that much
+   throughput beyond the backlog. `export KILN_METADATA=` the URLs
+   `kiln_meta` prints, for the commands below.
+2. **Shards.** Start shard servers; each keeps its streams' queues in DRAM.
+   ```
+   stoke_shard --port=7480     # on each shard host; logs its endpoint
+   ```
+3. **The stream.** Create it over the shards, with a task budget:
+   ```
+   stoke create fineweb --shards=host1:7480,host2:7480 --task_budget=4
+   stoke stats fineweb         # backlog and waiting consumers per shard
+   ```
+4. **The feed.** An Ember program on an Ember cluster (Ember's
+   [Running on a cluster](https://github.com/agentic-data-infra/ember#running-on-a-cluster))
+   writes the stream; its tasks write chunks as
+   they go, and the job seals the stream when it commits:
+   ```python
+   ember = (
+       Session.builder.appName("feed").master("ember://driver-host:7077")
+       .config("ember.cluster.workers", "8")
+       .config("ember.kiln.metadata", kiln_metadata)
+       .getOrCreate()
+   )
+   docs.write.format("stoke").option("batch", 16).option("sequence", 128) \
+       .option("seal", True).save("fineweb")
+   ```
+5. **The trainers.** Each rank (e.g. under `torchrun`) reads with its own
+   job name, and the ranks stop together once the stream ends:
+   ```python
+   dataset = stoke.StokeDataset("fineweb", job=f"run1-rank{rank}")
+   batches = iter(dataset)
+   while stoke.all_ranks_have_data((batch := next(batches, None)) is not None):
+       ...                     # a training step
+   ```
+
+**Locality.** Each chunk stays on one Kiln server, and loaders take the
+chunks on their own host's server first, so that most reads are local
+(Kiln's shared-memory path). With `stoke create --local_writes`, producers
+also write to their own host's Kiln server first: for deployments with a
+Kiln server on the producers' hosts. See
+[docs/design.md](docs/design.md#locality).
+
+**Example.** `examples/nanogpt/run.sh` runs all of this on one machine:
+a Kiln cluster, two shards, the stream, an Ember job over FineWeb-Edu
+(`feed.py`) and a nanoGPT-style trainer under `torchrun` (`train.py`, CPU
+ranks with gloo), at the same time. The feed runs at the trainer's pace
+(`TASK_BUDGET`, 4) and seals the stream when its job commits; the ranks
+print how long each waited for data.
+
+```
+examples/nanogpt/run.sh path/to/fineweb-edu.parquet    # RANKS=4 MAX_STEPS=1000 ...
+```
+
+It uses the Python modules built in place: stoke's (above) and Ember's,
+built with the stoke connector, in `$EMBER_HOME` (see the script).
 
 ## License
 
