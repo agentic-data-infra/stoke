@@ -1,5 +1,7 @@
 """The Ember job that feeds the trainer: FineWeb-Edu documents to byte
-tokens to int32 [b, T + 1] batches, written into a stoke stream.
+tokens to int32 [b, T + 1] batches, written into a stoke stream. Ember's
+stoke connector tokenizes the text and packs the tokens of each scan
+task's documents into batches.
 
     python examples/nanogpt/feed.py PARQUET STREAM [--metadata HOST:PORT]
 
@@ -23,7 +25,7 @@ sys.path.insert(
 )
 
 from ember import Session  # noqa: E402
-from ember.functions import call, col, lit  # noqa: E402
+from ember.functions import col  # noqa: E402
 
 
 def main():
@@ -49,18 +51,10 @@ def main():
     batches = (
         ember.read.parquet(args.parquet)
         .filter(col("int_score") >= args.min_score)
-        .select(
-            call(
-                "stoke_pack",
-                call("stoke_tokenize", col("text")),
-                lit(args.batch),
-                lit(args.sequence),
-            ).alias("batch")
-        )
-        .filter(col("batch").isNotNull())
-        .write.stream(args.stream, seal=True)
+        .select("text")
+        .write.stream(args.stream, seal=True, batch=args.batch, sequence=args.sequence)
     )
-    print(f"feed: {batches} batches into {args.stream} in {time.time() - start:.1f} s")
+    print(f"feed: {batches} documents into {args.stream} in {time.time() - start:.1f} s")
     ember.stop()
 
 

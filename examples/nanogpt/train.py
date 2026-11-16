@@ -3,7 +3,7 @@
     torchrun --nproc_per_node=2 examples/nanogpt/train.py --stream fineweb
 
 Each rank reads its own batches from the stream (StokeDataset, int32
-[b, T + 1] batches of byte tokens from Ember's stoke_pack), while the
+[b, T + 1] batches of byte tokens from Ember's stoke connector), while the
 producer still writes it. All ranks stop at the same step once one of them
 runs out (all_ranks_have_data). At the end every rank reports how much of
 its time it waited for data.
@@ -20,7 +20,7 @@ from torch.nn.parallel import DistributedDataParallel
 import stoke
 from model import GPT
 
-VOCAB = 257  # byte tokens and the end of text (stoke_tokenize)
+VOCAB = 257  # byte tokens and the end of text (stoke/format/Packer.h)
 
 
 def main():

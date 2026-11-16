@@ -1,7 +1,8 @@
 """The Ember job that feeds stoke in Experiment 1: each row of the
-pre-batched files (32 x 4097 tokens) becomes one int32 [32, 4097] batch
-(stoke_pack(tokens, 32, 4096)), written into a stoke stream, which is
-sealed when the job commits.
+pre-batched files (32 x 4097 tokens) becomes one int32 [32, 4097] batch,
+packed by Ember's stoke connector (write.stream with batch=32,
+sequence=4096) and written into a stoke stream, which is sealed when the
+job commits.
 
     python feed.py DATA_DIR STREAM --metadata HOST:PORT [--master local[N]]
 
@@ -13,7 +14,6 @@ import argparse
 import time
 
 from ember import Session
-from ember.functions import call, col, lit
 
 
 def main():
@@ -35,10 +35,10 @@ def main():
     start = time.time()
     batches = (
         ember.read.parquet(args.data_dir)
-        .select(call("stoke_pack", col("tokens"), lit(32), lit(4096)).alias("batch"))
-        .write.stream(args.stream, seal=True)
+        .select("tokens")
+        .write.stream(args.stream, seal=True, batch=32, sequence=4096)
     )
-    print(f"feed: {batches} batches into {args.stream} in {time.time() - start:.1f} s", flush=True)
+    print(f"feed: {batches} rows into {args.stream} in {time.time() - start:.1f} s", flush=True)
     ember.stop()
 
 
