@@ -39,6 +39,13 @@ cxx_library(
         "-Wl,--push-state,--no-as-needed",
         "-lgcc_s",
         "-Wl,--pop-state",
+        # A gflags of its own (scripts/build_gflags_pic.sh), hidden like the
+        # rest: the folly and fbthrift inside register their flags there,
+        # not in the shared gflags where Ember's module, with a folly and
+        # fbthrift of its own, registers the same ones.
+        "-Wl,--push-state,--whole-archive",
+        "/opt/deps-gcc12/gflags-pic/lib/libgflags.a",
+        "-Wl,--pop-state",
         "-Wl,--version-script=$(location :exports)",
         "-Wl,--exclude-libs,ALL",
     ],

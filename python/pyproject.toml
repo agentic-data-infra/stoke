@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "stoke"
+version = "0.1.0"
+description = "stoke's dataloader and local streams for PyTorch"
+requires-python = "==3.10.*"
+dependencies = ["ember", "numpy", "torch"]
+
+[tool.setuptools]
+packages = ["stoke"]
+
+[tool.setuptools.package-data]
+stoke = ["_stoke.so"]

@@ -3,3 +3,7 @@
 /third-party/generated/
 /python/stoke/_stoke.so
 __pycache__/
+/dist/
+/build/
+/python/build/
+*.egg-info/
