@@ -4,6 +4,8 @@ A distributed PyTorch dataloader for data preprocessed by
 [Ember](https://github.com/agentic-data-infra/ember). You write
 preprocessing as an Ember Dataframe pipeline, and stoke feeds its output to
 the trainers while the pipeline runs.
+[docs/comparison.md](docs/comparison.md) compares stoke with other data
+loaders for training.
 
 Producers (e.g. the workers running an
 [Ember](https://github.com/agentic-data-infra/ember) job's tasks) write
