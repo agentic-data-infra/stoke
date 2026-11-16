@@ -1,5 +1,5 @@
-# The Python module stoke._stoke: the dataloader, linked with stoke, Kiln's
-# client, folly and fbthrift into one shared object.
+# The Python module stoke._stoke: the dataloader and the local cluster,
+# linked with stoke, Kiln, folly and fbthrift into one shared object.
 #
 #   buck2 build //python:_stoke --out python/stoke/_stoke.so
 #
@@ -27,6 +27,7 @@ cxx_library(
     deps = [
         "//stoke/client:producer",
         "//stoke/loader:loader",
+        "//stoke/local:local",
         ":pybind11",
         "kiln//kiln/client:client",
     ],

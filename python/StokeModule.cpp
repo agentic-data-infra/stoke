@@ -1,6 +1,7 @@
 // The Python module stoke._stoke: the dataloader (stoke/loader) and its
 // batches as DLPack tensors, for torch.from_dlpack; a producer of chunks
-// of NumPy arrays; and creating, sealing and removing streams.
+// of NumPy arrays; creating, sealing and removing streams; and Kiln and a
+// shard in this process (stoke/local), for stoke.LocalStream.
 
 #include <Python.h>
 #include <folly/coro/BlockingWait.h>
@@ -12,6 +13,7 @@
 #include "python/DLPack.h"
 #include "stoke/client/Producer.h"
 #include "stoke/loader/Loader.h"
+#include "stoke/local/LocalCluster.h"
 
 namespace py = pybind11;
 
@@ -224,6 +226,39 @@ class PyProducer {
   std::unique_ptr<Producer> producer_;
 };
 
+// A LocalCluster that close() stops before Python collects it.
+class PyLocalCluster {
+ public:
+  explicit PyLocalCluster(uint64_t memory) {
+    py::gil_scoped_release release;
+    cluster_ =
+        std::make_unique<LocalCluster>(LocalClusterOptions{.memory = memory});
+  }
+
+  std::string metadata() const {
+    return running().metadata().toString();
+  }
+
+  std::string shard() const {
+    return running().shard();
+  }
+
+  void close() {
+    py::gil_scoped_release release;
+    cluster_.reset();
+  }
+
+ private:
+  const LocalCluster& running() const {
+    if (!cluster_) {
+      throw std::runtime_error("the local cluster is closed");
+    }
+    return *cluster_;
+  }
+
+  std::unique_ptr<LocalCluster> cluster_;
+};
+
 std::optional<Tensor> nextTensor(Loader& loader) {
   std::optional<Batch> batch;
   {
@@ -264,6 +299,12 @@ PYBIND11_MODULE(_stoke, m) {
           &PyProducer::put,
           py::arg("arrays"),
           "Puts the arrays, a batch each, as one chunk; returns its id.");
+
+  py::class_<PyLocalCluster>(m, "LocalCluster")
+      .def(py::init<uint64_t>(), py::arg("memory"))
+      .def_property_readonly("metadata", &PyLocalCluster::metadata)
+      .def_property_readonly("shard", &PyLocalCluster::shard)
+      .def("close", &PyLocalCluster::close, "Stops the shard and Kiln.");
 
   m.def(
       "create_stream",
