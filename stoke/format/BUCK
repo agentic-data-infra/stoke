@@ -1,10 +1,16 @@
-# The batch format (Batch.h). Standard C++ only: producers outside stoke use
-# it too.
+# The batch format (Batch.h) and packing tokens into batches (Packer.h).
+# Standard C++ only: producers outside stoke use it too.
 
 cxx_library(
     name = "format",
-    srcs = ["Batch.cpp"],
+    srcs = [
+        "Batch.cpp",
+        "Packer.cpp",
+    ],
     header_namespace = "stoke/format",
-    exported_headers = ["Batch.h"],
+    exported_headers = [
+        "Batch.h",
+        "Packer.h",
+    ],
     visibility = ["PUBLIC"],
 )
