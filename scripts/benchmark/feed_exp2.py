@@ -1,7 +1,8 @@
 """The Ember job that feeds stoke in Experiment 2: reads the tokenized
 documents (prep_tokenized.py), keeps those that pass the filter, and
 writes their tokens into a stoke stream, which the stream writer packs
-into int32 batches of [32, 4097] (write.stream(batch=32, sequence=4096)).
+into int32 batches of [32, 4097] (write.format("stoke") with batch=32,
+sequence=4096).
 The stream is sealed when the job commits.
 
     python feed_exp2.py DATA_DIR STREAM --metadata HOST:PORT [--master local[N]]
@@ -33,7 +34,6 @@ def main():
         Session.builder.appName("dlbench-feed-exp2")
         .master(args.master)
         .config("ember.kiln.metadata", args.metadata)
-        .config("ember.stoke.chunk_bytes", str(args.chunk_mb << 20))
         .config("ember.files.shuffle", "file")
         .config("ember.files.shuffle_seed", "0")
     )
@@ -45,7 +45,12 @@ def main():
         ember.read.parquet(args.data_dir)
         .filter(FILTER_SQL)
         .select("tokens")
-        .write.stream(args.stream, seal=True, batch=BATCH, sequence=SEQ - 1)
+        .write.format("stoke")
+        .option("batch", BATCH)
+        .option("sequence", SEQ - 1)
+        .option("seal", True)
+        .option("chunk_bytes", args.chunk_mb << 20)
+        .save(args.stream)
     )
     print(f"feed: {docs} documents into {args.stream} in {time.time() - start:.1f} s", flush=True)
     ember.stop()

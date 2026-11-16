@@ -83,7 +83,7 @@ the same work (`exp2_common.py`):
 3. shuffle, and feed 4 trainers.
 
 - stoke: the Ember feed job (`feed_exp2.py`) filters, and its stream
-  writer packs (`write.stream(batch=32, sequence=4096)`); each trainer
+  writer packs (`write.format("stoke")` with `batch=32`, `sequence=4096`); each trainer
   runs a stoke loader on the stream.
 - Grain and Zephon: one pipeline per trainer, with its built-in Parquet
   reader and filter. Zephon packs with `pack_flat(algorithm="wrap")`
