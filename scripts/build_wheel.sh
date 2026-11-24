@@ -18,7 +18,7 @@ TAG=$($PYTHON -c 'import sys; print(f"cp{sys.version_info.major}{sys.version_inf
 
 uv pip install -q -p $PYTHON wheel auditwheel patchelf
 
-if [ ! -e /opt/deps-gcc12/gflags-pic/lib/libgflags.a ]; then
+if [ ! -e /opt/gflags-pic-gcc12/lib/libgflags.a ]; then
     scripts/build_gflags_pic.sh
 fi
 buck2 build //python:_stoke --out python/stoke/_stoke.so

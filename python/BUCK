@@ -44,7 +44,7 @@ cxx_library(
         # not in the shared gflags where Ember's module, with a folly and
         # fbthrift of its own, registers the same ones.
         "-Wl,--push-state,--whole-archive",
-        "/opt/deps-gcc12/gflags-pic/lib/libgflags.a",
+        "/opt/gflags-pic-gcc12/lib/libgflags.a",
         "-Wl,--pop-state",
         "-Wl,--version-script=$(location :exports)",
         "-Wl,--exclude-libs,ALL",

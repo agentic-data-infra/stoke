@@ -1,13 +1,20 @@
 #!/bin/bash
 # Builds gflags 2.2.2 as a static, position-independent library into
-# /opt/deps-gcc12/gflags-pic, for stoke's Python module (python/BUCK): it
+# /opt/gflags-pic-gcc12, for stoke's Python module (python/BUCK): it
 # links a gflags of its own, so that its folly and fbthrift register their
 # flags apart from Ember's module in the same process. Once per machine;
 # scripts/gen_third_party.sh and scripts/build_wheel.sh run it if missing.
 set -euo pipefail
 
-PREFIX=/opt/deps-gcc12/gflags-pic
+# Not under /opt/deps-gcc12: CMake looks in <prefix>/<name>*/ of every prefix
+# it searches, so builds against that prefix would find this gflags rather
+# than the shared one glog links.
+PREFIX=/opt/gflags-pic-gcc12
 VERSION=2.2.2
+if [[ ! -w "$PREFIX" ]]; then
+    sudo mkdir -p "$PREFIX"
+    sudo chown "$(id -u):$(id -g)" "$PREFIX"
+fi
 src=$(mktemp -d)
 trap 'rm -rf "$src"' EXIT
 
