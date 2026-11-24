@@ -27,7 +27,7 @@ if [[ -x "$python" ]]; then
 import json, sysconfig, pybind11
 paths = [sysconfig.get_paths()["include"], pybind11.get_include()]
 print(json.dumps([f for p in paths for f in ("-isystem", p)]))')
-  if [[ ! -e /opt/deps-gcc12/gflags-pic/lib/libgflags.a ]]; then
+  if [[ ! -e /opt/gflags-pic-gcc12/lib/libgflags.a ]]; then
     "$root/scripts/build_gflags_pic.sh"
   fi
 fi
